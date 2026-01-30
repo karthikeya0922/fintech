@@ -13,15 +13,10 @@ import {
     Line,
 } from 'recharts';
 import { useAuth } from '../context/AuthContext';
+import { useUserProfile } from '../context/UserProfileContext';
 
 // Mock data matching reference
-const incomeExpenseData = {
-    income: 2560000,
-    expenses: 1320000,
-    savings: 1240000,
-    creditScore: 785,
-    creditStatus: 'Very Good',
-};
+// const incomeExpenseData = { ... } // Replaced by context
 
 const subscriptions = [
     { id: 1, name: 'Netflix Premium', category: 'Entertainment', amount: 649, color: '#E50914' },
@@ -68,7 +63,10 @@ const formatCurrency = (value: number) => {
 
 const Dashboard = () => {
     const { user } = useAuth();
-    const firstName = user?.name.split(' ')[0] || 'there';
+    const { profile } = useUserProfile(); // Get profile
+    const firstName = profile.name.split(' ')[0] || user?.name.split(' ')[0] || 'there'; // Use profile name first
+
+    const savings = profile.income - profile.expenses; // Calculate savings
 
     const today = new Date();
     const dateString = today.toLocaleDateString('en-US', {
@@ -111,8 +109,8 @@ const Dashboard = () => {
                                 <PieChart>
                                     <Pie
                                         data={[
-                                            { value: incomeExpenseData.income, color: '#10b981' },
-                                            { value: incomeExpenseData.expenses, color: '#ef4444' },
+                                            { value: profile.income, color: '#10b981' },
+                                            { value: profile.expenses, color: '#ef4444' },
                                         ]}
                                         cx="50%"
                                         cy="50%"
@@ -135,7 +133,7 @@ const Dashboard = () => {
                             }}>
                                 <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>NET</div>
                                 <div style={{ fontSize: '18px', fontWeight: 700, color: '#10b981' }}>
-                                    +{formatCurrency(incomeExpenseData.savings)}
+                                    +{formatCurrency(savings)}
                                 </div>
                             </div>
                         </div>
@@ -143,12 +141,12 @@ const Dashboard = () => {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
                                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
                                 <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Income</span>
-                                <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{formatCurrency(incomeExpenseData.income)}</span>
+                                <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{formatCurrency(profile.income)}</span>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
                                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} />
                                 <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Expenses</span>
-                                <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{formatCurrency(incomeExpenseData.expenses)}</span>
+                                <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{formatCurrency(profile.expenses)}</span>
                             </div>
                         </div>
                     </div>
@@ -173,7 +171,7 @@ const Dashboard = () => {
                                 fill="none"
                                 stroke="url(#scoreGradient)"
                                 strokeWidth="8"
-                                strokeDasharray={`${(incomeExpenseData.creditScore / 900) * 264} 264`}
+                                strokeDasharray={`${(785 / 900) * 264} 264`}
                                 strokeLinecap="round"
                             />
                             <defs>
@@ -190,9 +188,9 @@ const Dashboard = () => {
                             transform: 'translate(-50%, -50%)',
                             textAlign: 'center',
                         }}>
-                            <div style={{ fontSize: '28px', fontWeight: 700 }}>{incomeExpenseData.creditScore}</div>
+                            <div style={{ fontSize: '28px', fontWeight: 700 }}>785</div>
                             <div style={{ fontSize: '10px', color: '#10b981', textTransform: 'uppercase' }}>
-                                {incomeExpenseData.creditStatus}
+                                Very Good
                             </div>
                         </div>
                     </div>

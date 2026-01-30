@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useUserProfile } from '../context/UserProfileContext';
 
 interface Message {
     id: string;
@@ -54,6 +55,7 @@ const AIChat = () => {
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const location = useLocation();
     const { user } = useAuth();
+    const { profile } = useUserProfile();
 
     // Handle new chat from sidebar
     useEffect(() => {
@@ -161,10 +163,15 @@ const AIChat = () => {
         }
 
         try {
-            const userData = user ? {
-                name: user.name,
-                email: user.email,
-            } : null;
+            const userData = {
+                name: profile.name || user?.name || 'User',
+                email: profile.email || user?.email,
+                income: profile.income,
+                expenses: profile.expenses,
+                savingsGoal: profile.savingsGoal,
+                portfolioValue: profile.portfolioValue,
+                theme: profile.theme
+            };
 
             const response = await fetch('http://localhost:5000/api/chat', {
                 method: 'POST',

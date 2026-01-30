@@ -1,0 +1,77 @@
+{
+  "feature_names": [
+    "amount",
+    "log_amount",
+    "hour",
+    "day_of_week",
+    "is_weekend",
+    "is_night",
+    "is_business_hours",
+    "tx_count_1h",
+    "tx_count_24h",
+    "tx_count_7d",
+    "amount_sum_1h",
+    "amount_sum_24h",
+    "unique_merchants_24h",
+    "unique_devices_24h",
+    "time_since_last_tx",
+    "log_time_since_last",
+    "distance_from_home",
+    "log_distance",
+    "is_new_location",
+    "is_international",
+    "is_new_device",
+    "failed_attempts",
+    "transaction_type_encoded",
+    "merchant_category_encoded"
+  ],
+  "metrics": {
+    "roc_auc": 0.9438520885286783,
+    "avg_precision": 0.9079101363119969,
+    "recall": 0.9501246882793017,
+    "precision": 0.06045699777848302,
+    "f1": 0.11368044159331643,
+    "threshold": 0.0009731862810440361,
+    "confusion_matrix": [
+      [
+        3679,
+        5921
+      ],
+      [
+        20,
+        381
+      ]
+    ],
+    "test_samples": 10001,
+    "fraud_samples": 401
+  },
+  "feature_importance": {
+    "is_new_device": 2.830359935760498,
+    "distance_from_home": 1.0557481050491333,
+    "time_since_last_tx": 0.7554891705513,
+    "hour": 0.5442857146263123,
+    "amount_sum_24h": 0.5203215479850769,
+    "amount": 0.4221799373626709,
+    "amount_sum_1h": 0.3794974386692047,
+    "merchant_category_encoded": 0.35491669178009033,
+    "day_of_week": 0.23101294040679932,
+    "log_distance": 0.2234143614768982,
+    "tx_count_7d": 0.1921146661043167,
+    "log_time_since_last": 0.16037870943546295,
+    "transaction_type_encoded": 0.14586319029331207,
+    "log_amount": 0.07849887013435364,
+    "failed_attempts": 0.0747351422905922,
+    "is_business_hours": 0.07383677363395691,
+    "tx_count_24h": 0.02259667217731476,
+    "is_night": 0.017977245151996613,
+    "is_weekend": 0.01783403567969799,
+    "is_new_location": 0.008551791310310364,
+    "tx_count_1h": 0.006214302033185959,
+    "unique_merchants_24h": 0.006157093681395054,
+    "unique_devices_24h": 0.0004431593988556415,
+    "is_international": 0.0
+  },
+  "threshold": 0.0009731862810440361,
+  "model_version": "XGBoost v1.0",
+  "trained_at": "2026-01-31T00:24:06.149383"
+}

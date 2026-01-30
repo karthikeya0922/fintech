@@ -26,7 +26,7 @@ except ImportError:
     pass
 
 # Alpha Vantage API key
-ALPHA_VANTAGE_KEY = os.getenv('ALPHA_VANTAGE_KEY', '8P11NVMOYR5AZ8AU')
+ALPHA_VANTAGE_KEY = os.getenv('ALPHA_VANTAGE_KEY', 'bf57a61fd6d4b0fa71e43af0795bb56c1f1e1c1a')
 ALPHA_VANTAGE_BASE = 'https://www.alphavantage.co/query'
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
