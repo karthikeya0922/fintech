@@ -38,12 +38,21 @@ const NewsHub = () => {
         setIsLoading(true);
         try {
             const category = activeCategory === 'For You' ? '' : activeCategory;
+            console.log('Fetching news for category:', category);
             const response = await fetch(`http://localhost:5000/api/news?category=${category}&limit=12`);
+            console.log('Response status:', response.status);
             if (response.ok) {
                 const data = await response.json();
-                setNews(data.news || []);
+                console.log('News data received:', data);
+                const newsArray = data.news || [];
+                console.log('Setting news array with', newsArray.length, 'articles');
+                setNews(newsArray);
+            } else {
+                console.error('Response not OK:', response.status);
+                throw new Error('API error');
             }
-        } catch {
+        } catch (error) {
+            console.error('Fetch error:', error);
             // Mock data fallback
             setNews([
                 {
@@ -183,35 +192,53 @@ const NewsHub = () => {
 
             {/* News Grid */}
             <motion.div className="news-grid" variants={containerVariants}>
-                {news.map((article, i) => (
-                    <motion.article
-                        key={i}
-                        className="news-card"
-                        variants={itemVariants}
-                        whileHover={{ y: -4 }}
-                    >
-                        {article.image && (
-                            <div className="news-image">
-                                <img src={article.image} alt="" loading="lazy" />
-                                <span className="news-category">{article.category}</span>
-                            </div>
-                        )}
-                        <div className="news-content">
-                            <h3>{article.title}</h3>
-                            <p>{article.description}</p>
-                            <div className="news-meta">
-                                <span className="source">{article.source}</span>
-                                <span className="dot">•</span>
-                                <span>{formatTime(article.publishedAt)}</span>
-                                <span className="dot">•</span>
-                                <span>{article.readTime} min</span>
+                {isLoading ? (
+                    // Loading skeleton
+                    [...Array(6)].map((_, i) => (
+                        <div key={i} className="news-card skeleton-card">
+                            <div className="news-image skeleton" style={{ height: '160px' }}></div>
+                            <div className="news-content">
+                                <div className="skeleton" style={{ height: '24px', marginBottom: '8px' }}></div>
+                                <div className="skeleton" style={{ height: '40px', marginBottom: '8px' }}></div>
+                                <div className="skeleton" style={{ height: '16px', width: '60%' }}></div>
                             </div>
                         </div>
-                        <a href={article.url} className="news-link" target="_blank" rel="noopener noreferrer">
-                            <ExternalLink size={16} />
-                        </a>
-                    </motion.article>
-                ))}
+                    ))
+                ) : news.length === 0 ? (
+                    <div className="no-news" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                        <p>No news articles available. Try refreshing or check back later.</p>
+                    </div>
+                ) : (
+                    news.map((article, i) => (
+                        <motion.article
+                            key={i}
+                            className="news-card"
+                            variants={itemVariants}
+                            whileHover={{ y: -4 }}
+                        >
+                            {article.image && (
+                                <div className="news-image">
+                                    <img src={article.image} alt="" loading="lazy" />
+                                    <span className="news-category">{article.category}</span>
+                                </div>
+                            )}
+                            <div className="news-content">
+                                <h3>{article.title}</h3>
+                                <p>{article.description}</p>
+                                <div className="news-meta">
+                                    <span className="source">{article.source}</span>
+                                    <span className="dot">•</span>
+                                    <span>{formatTime(article.publishedAt)}</span>
+                                    <span className="dot">•</span>
+                                    <span>{article.readTime} min</span>
+                                </div>
+                            </div>
+                            <a href={article.url} className="news-link" target="_blank" rel="noopener noreferrer">
+                                <ExternalLink size={16} />
+                            </a>
+                        </motion.article>
+                    ))
+                )}
             </motion.div>
 
             {/* Trending Sidebar */}

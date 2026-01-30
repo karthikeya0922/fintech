@@ -211,7 +211,7 @@ const AIAssistant = () => {
                                     <Bot size={20} />
                                 </div>
                                 <div className="ai-title-text">
-                                    <span className="ai-name">Void AI</span>
+                                    <span className="ai-name">Finova AI</span>
                                     <span className="ai-status">
                                         <span className="status-dot"></span>
                                         Online

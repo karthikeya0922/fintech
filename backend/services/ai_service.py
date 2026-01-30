@@ -42,7 +42,7 @@ class AIAssistant:
         if HAS_OPENAI and Config.OPENAI_API_KEY:
             self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
         
-        self.system_prompt = """You are Void AI, a smart financial assistant for Visnova - a premium fintech app.
+        self.system_prompt = """You are Finova AI, a smart financial assistant for Finova - a premium fintech app.
 
 PERSONALITY:
 - Friendly but professional
@@ -260,7 +260,7 @@ IMPORTANT: Always use the user's profile data to personalize responses. Referenc
             response = f"Hi {name}! I can help you with:\n• Analyzing your ₹{savings:,} monthly savings\n• Investment recommendations for your ₹{portfolio:,} portfolio\n• SIP/EMI calculations\n• Credit score insights ({credit_score})\n\nWhat would you like to explore?"
         
         elif 'hi' in message_lower or 'hello' in message_lower or 'hey' in message_lower:
-            response = f"Hello {name}! 👋 I'm Void AI, your financial assistant. You're saving ₹{savings:,}/month with a portfolio of ₹{portfolio:,}. How can I help you today?"
+            response = f"Hello {name}! 👋 I'm Finova AI, your financial assistant. You're saving ₹{savings:,}/month with a portfolio of ₹{portfolio:,}. How can I help you today?"
         
         else:
             # Generic but personalized

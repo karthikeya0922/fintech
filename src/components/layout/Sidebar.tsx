@@ -47,7 +47,7 @@ const Sidebar = () => {
                         <Zap size={20} color="#fff" />
                     </div>
                     <div>
-                        <div className="sidebar-logo-text">Void</div>
+                        <div className="sidebar-logo-text">Finova</div>
                         <div className="sidebar-logo-version">FINTECH</div>
                     </div>
                 </div>
@@ -60,7 +60,7 @@ const Sidebar = () => {
                     <div className="nav-section-title">Assistant</div>
                     <NavLink to="#" className="nav-link">
                         <Zap className="nav-link-icon" size={18} />
-                        <span>Void AI</span>
+                        <span>Finova AI</span>
                     </NavLink>
                     <NavLink to="#" className="nav-link">
                         <Plus className="nav-link-icon" size={18} />

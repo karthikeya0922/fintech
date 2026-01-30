@@ -1,11 +1,18 @@
 """
 Visnova 2.0 Backend - News Service
-Fetches financial news from NewsAPI
+Fetches financial news from NewsData.io
 """
 import requests
 from datetime import datetime, timedelta
 import random
 from config import Config
+
+# Cache for news data (to avoid slow API calls)
+_news_cache = {
+    'data': None,
+    'timestamp': None,
+    'ttl_minutes': 5  # Cache for 5 minutes
+}
 
 # Fallback mock news data
 MOCK_NEWS = [
@@ -77,37 +84,62 @@ CATEGORIES = ['For You', 'All News', 'Markets', 'Crypto', 'Economy', 'Tech', 'St
 
 def get_news(category: str = None, limit: int = 20):
     """Fetch financial news, optionally filtered by category"""
+    global _news_cache
     
-    # Try to fetch from NewsAPI if key is available
+    # Check cache first for faster loading
+    if _news_cache['data'] and _news_cache['timestamp']:
+        cache_age = datetime.now() - _news_cache['timestamp']
+        if cache_age.total_seconds() < _news_cache['ttl_minutes'] * 60:
+            # Return cached data (fast!)
+            cached_news = _news_cache['data']
+            if category and category not in ['For You', 'All News']:
+                cached_news = [n for n in cached_news if n.get('category', '').lower() == category.lower()]
+            return cached_news[:limit]
+    
+    # Try to fetch from NewsData.io if key is available
     if Config.NEWS_API_KEY:
         try:
-            url = 'https://newsapi.org/v2/top-headlines'
+            # Using NewsData.io API (for pub_ keys)
+            url = 'https://newsdata.io/api/1/news'
             params = {
-                'apiKey': Config.NEWS_API_KEY,
+                'apikey': Config.NEWS_API_KEY,
                 'category': 'business',
                 'country': 'in',
-                'pageSize': limit
+                'language': 'en'
             }
             
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=15)
             data = response.json()
             
-            if data.get('status') == 'ok':
+            if data.get('status') == 'success':
                 articles = []
-                for article in data.get('articles', []):
+                for article in data.get('results', []):
+                    # Skip articles with "ONLY AVAILABLE IN PAID PLANS" or no content
+                    if not article.get('title') or 'PAID PLANS' in str(article.get('description', '')):
+                        continue
+                    
                     articles.append({
                         'title': article.get('title', ''),
-                        'description': article.get('description', ''),
-                        'source': article.get('source', {}).get('name', 'Unknown'),
-                        'category': category or 'Markets',
-                        'image': article.get('urlToImage', ''),
-                        'url': article.get('url', '#'),
-                        'publishedAt': article.get('publishedAt', ''),
+                        'description': article.get('description', '') or (article.get('content', '')[:200] if article.get('content') else ''),
+                        'source': article.get('source_id', 'Unknown').replace('_', ' ').title(),
+                        'category': article.get('category', ['Markets'])[0] if article.get('category') else 'Markets',
+                        'image': article.get('image_url', '') or 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800',
+                        'url': article.get('link', '#'),
+                        'publishedAt': article.get('pubDate', ''),
                         'readTime': random.randint(3, 10)
                     })
-                return articles
+                
+                if articles:
+                    # Cache the results
+                    _news_cache['data'] = articles
+                    _news_cache['timestamp'] = datetime.now()
+                    print(f"✅ Cached {len(articles)} news articles")
+                    
+                    if category and category not in ['For You', 'All News']:
+                        articles = [n for n in articles if n.get('category', '').lower() == category.lower()]
+                    return articles[:limit]
         except Exception as e:
-            print(f"NewsAPI error: {e}")
+            print(f"NewsData.io error: {e}")
     
     # Return mock news
     news = MOCK_NEWS.copy()

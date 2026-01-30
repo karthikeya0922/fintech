@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
     Calculator,
     Play,
@@ -14,7 +14,12 @@ import {
     TrendingUp,
     Receipt,
     Target,
-    Percent
+    Percent,
+    Download,
+    FileText,
+    Copy,
+    Check,
+    X
 } from 'lucide-react';
 
 interface Variable {
@@ -216,6 +221,10 @@ const Terminal = () => {
     const [tableData, setTableData] = useState<ResultRow[]>([]);
     const [isCalculating, setIsCalculating] = useState(false);
     const [showVariables, setShowVariables] = useState(true);
+    const [showExportMenu, setShowExportMenu] = useState(false);
+    const [showSensitivity, setShowSensitivity] = useState(false);
+    const [sensitivityData, setSensitivityData] = useState<{ variable: string, results: { change: string, value: number }[] }[]>([]);
+    const [copied, setCopied] = useState(false);
 
     useEffect(() => {
         const handleAICommand = (e: Event) => {
@@ -294,6 +303,132 @@ const Terminal = () => {
         return 'Calculator';
     };
 
+    // Export to CSV
+    const exportToCSV = () => {
+        if (!result || tableData.length === 0) return;
+
+        const headers = Object.keys(tableData[0]).join(',');
+        const rows = tableData.map(row => Object.values(row).join(',')).join('\n');
+        const csv = `${headers}\n${rows}`;
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `finova-${activeCalc}-${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setShowExportMenu(false);
+    };
+
+    // Export to JSON
+    const exportToJSON = () => {
+        if (!result) return;
+
+        const data = {
+            calculator: activeCalc,
+            calculatorName: getActiveCalcName(),
+            date: new Date().toISOString(),
+            variables: variables.reduce((acc, v) => ({ ...acc, [v.name]: v.value }), {}),
+            result,
+            breakdown: tableData
+        };
+
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `finova-${activeCalc}-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setShowExportMenu(false);
+    };
+
+    // Copy results to clipboard
+    const copyResults = async () => {
+        if (!result) return;
+
+        let text = `📊 ${getActiveCalcName()} Results\n\n`;
+        text += `Variables:\n`;
+        variables.forEach(v => {
+            text += `  ${v.label}: ${v.value}\n`;
+        });
+        text += `\nResults:\n`;
+        Object.entries(result).filter(([key]) =>
+            !['yearlyBreakdown', 'breakdown', 'formula', 'method', 'note', 'warning', 'recommendation', 'insight'].includes(key)
+            && typeof result[key] === 'number'
+        ).forEach(([key, val]) => {
+            text += `  ${key.replace(/([A-Z])/g, ' $1').trim()}: ${typeof val === 'number' ? formatCurrency(val) : val}\n`;
+        });
+
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        setShowExportMenu(false);
+    };
+
+    // Run Sensitivity Analysis
+    const runSensitivityAnalysis = async () => {
+        if (!result) {
+            await runCalculation();
+        }
+
+        const numericVars = variables.filter(v => v.type !== 'select');
+        const results: { variable: string, results: { change: string, value: number }[] }[] = [];
+
+        for (const variable of numericVars.slice(0, 3)) { // Analyze top 3 variables
+            const baseValue = Number(variable.value);
+            const variations = [
+                { change: '-20%', factor: 0.8 },
+                { change: '-10%', factor: 0.9 },
+                { change: 'Base', factor: 1.0 },
+                { change: '+10%', factor: 1.1 },
+                { change: '+20%', factor: 1.2 }
+            ];
+
+            const varResults: { change: string, value: number }[] = [];
+
+            for (const v of variations) {
+                const testValue = Math.round(baseValue * v.factor);
+                const params: Record<string, number | string | boolean> = {};
+                variables.forEach(vb => {
+                    if (vb.name === variable.name) {
+                        params[vb.name] = testValue;
+                    } else if (vb.name === 'metro_city') {
+                        params[vb.name] = Number(vb.value) === 1;
+                    } else if (vb.type === 'select') {
+                        params[vb.name] = vb.value;
+                    } else {
+                        params[vb.name] = Number(vb.value);
+                    }
+                });
+
+                try {
+                    const response = await fetch('http://localhost:5000/api/terminal/calculate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: activeCalc, params }),
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        const mainValue = Object.entries(data).find(([key]) =>
+                            key.toLowerCase().includes('value') || key.toLowerCase().includes('corpus') || key.toLowerCase().includes('total')
+                        );
+                        varResults.push({ change: v.change, value: mainValue ? Number(mainValue[1]) : 0 });
+                    }
+                } catch {
+                    varResults.push({ change: v.change, value: 0 });
+                }
+            }
+
+            results.push({ variable: variable.label, results: varResults });
+        }
+
+        setSensitivityData(results);
+        setShowSensitivity(true);
+    };
+
     const containerVariants = {
         hidden: { opacity: 0 },
         visible: { opacity: 1, transition: { staggerChildren: 0.05 } }
@@ -320,11 +455,64 @@ const Terminal = () => {
                     </div>
                 </div>
                 <div className="terminal-actions">
-                    <button className="terminal-btn" title="Sensitivity Analysis">
+                    {/* Export dropdown */}
+                    <div className="export-dropdown-container" style={{ position: 'relative' }}>
+                        <button
+                            className="terminal-btn"
+                            title="Export Results"
+                            onClick={() => setShowExportMenu(!showExportMenu)}
+                            disabled={!result}
+                        >
+                            <Download size={16} />
+                            Export
+                        </button>
+                        <AnimatePresence>
+                            {showExportMenu && (
+                                <motion.div
+                                    className="export-dropdown"
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -10 }}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        right: 0,
+                                        marginTop: '4px',
+                                        background: 'var(--card-bg)',
+                                        border: '1px solid var(--border-color)',
+                                        borderRadius: '8px',
+                                        padding: '8px',
+                                        minWidth: '160px',
+                                        zIndex: 100
+                                    }}
+                                >
+                                    <button onClick={exportToCSV} className="dropdown-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', width: '100%', background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: '4px' }}>
+                                        <FileText size={14} /> Export CSV
+                                    </button>
+                                    <button onClick={exportToJSON} className="dropdown-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', width: '100%', background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: '4px' }}>
+                                        <FileText size={14} /> Export JSON
+                                    </button>
+                                    <button onClick={copyResults} className="dropdown-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', width: '100%', background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', borderRadius: '4px' }}>
+                                        {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied!' : 'Copy Results'}
+                                    </button>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+                    <button
+                        className="terminal-btn"
+                        title="Sensitivity Analysis"
+                        onClick={runSensitivityAnalysis}
+                        disabled={isCalculating}
+                    >
                         <Sliders size={16} />
                         Sensitivity
                     </button>
-                    <button className="terminal-btn accent" title="Monte Carlo">
+                    <button
+                        className="terminal-btn accent"
+                        title="Monte Carlo Simulation"
+                        onClick={() => setActiveCalc('monte_carlo')}
+                    >
                         <BarChart3 size={16} />
                         Monte Carlo
                     </button>
@@ -338,6 +526,87 @@ const Terminal = () => {
                     </button>
                 </div>
             </motion.div>
+
+            {/* Sensitivity Analysis Modal */}
+            <AnimatePresence>
+                {showSensitivity && (
+                    <motion.div
+                        className="sensitivity-modal-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setShowSensitivity(false)}
+                        style={{
+                            position: 'fixed',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: 'rgba(0,0,0,0.7)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 1000
+                        }}
+                    >
+                        <motion.div
+                            className="sensitivity-modal"
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: 'var(--card-bg)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '16px',
+                                padding: '24px',
+                                minWidth: '600px',
+                                maxHeight: '80vh',
+                                overflow: 'auto'
+                            }}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <h2 style={{ margin: 0, color: 'var(--text-primary)' }}>📊 Sensitivity Analysis</h2>
+                                <button onClick={() => setShowSensitivity(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                                    <X size={24} />
+                                </button>
+                            </div>
+                            <p style={{ color: 'var(--text-muted)', marginBottom: '20px' }}>
+                                How results change when varying each parameter by ±10% and ±20%
+                            </p>
+                            {sensitivityData.length === 0 ? (
+                                <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>Running sensitivity analysis...</p>
+                            ) : (
+                                sensitivityData.map((item, idx) => (
+                                    <div key={idx} style={{ marginBottom: '24px' }}>
+                                        <h4 style={{ color: 'var(--accent-primary)', marginBottom: '8px' }}>{item.variable}</h4>
+                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                            <thead>
+                                                <tr>
+                                                    {item.results.map((r, i) => (
+                                                        <th key={i} style={{ padding: '8px', background: r.change === 'Base' ? 'var(--accent-primary)' : 'var(--bg-secondary)', color: 'var(--text-primary)', borderRadius: '4px' }}>
+                                                            {r.change}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    {item.results.map((r, i) => (
+                                                        <td key={i} style={{ padding: '8px', textAlign: 'center', color: 'var(--text-primary)' }}>
+                                                            {formatCurrency(r.value)}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ))
+                            )}
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             <div className="terminal-body">
                 <motion.div className="terminal-sidebar" variants={itemVariants}>
