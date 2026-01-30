@@ -55,6 +55,27 @@ const AIAssistant = () => {
         return path.replace('/', '');
     };
 
+    // Close popup on route change
+    useEffect(() => {
+        setIsOpen(false);
+    }, [location.pathname]);
+
+    // Listen for sidebar events to open chat
+    useEffect(() => {
+        const handleOpenAIChat = (event: CustomEvent<{ newChat: boolean }>) => {
+            if (event.detail.newChat) {
+                // Clear messages for new chat
+                setMessages([]);
+            }
+            setIsOpen(true);
+        };
+
+        window.addEventListener('openAIChat', handleOpenAIChat as EventListener);
+        return () => {
+            window.removeEventListener('openAIChat', handleOpenAIChat as EventListener);
+        };
+    }, []);
+
     useEffect(() => {
         if (isOpen) {
             fetchSuggestions();

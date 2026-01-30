@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
     Shield,
@@ -11,13 +11,16 @@ import {
     CheckCircle,
     XCircle,
     Search,
+    RefreshCw,
+    Loader2,
 } from 'lucide-react';
 import {
     LineChart,
     Line,
     ResponsiveContainer,
 } from 'recharts';
-import { fraudAlerts, velocityMetrics, defenseEngineStats, entityNetwork } from '../data/mockData';
+
+const API_BASE = 'http://localhost:5000/api';
 
 const containerVariants = {
     hidden: { opacity: 0 },
@@ -52,13 +55,212 @@ const getSeverityBg = (type: string) => {
     }
 };
 
+interface Alert {
+    id: string;
+    type: string;
+    title: string;
+    description: string;
+    timestamp: string;
+    riskScore: number;
+    status: string;
+    entityType: string;
+    entityId: string;
+}
+
+interface VelocityMetric {
+    label: string;
+    value: number | string;
+    trend: number[];
+    normal: number;
+}
+
+interface DefenseStats {
+    modelVersion: string;
+    accuracy: number;
+    precision: number;
+    recall: number;
+    alertsToday: number;
+    alertsBlocked: number;
+    avgResponseTime: string;
+}
+
+interface EntityNode {
+    id: string;
+    type: string;
+    label: string;
+    riskScore: number;
+}
+
+interface EntityNetwork {
+    nodes: EntityNode[];
+    edges: { from: string; to: string }[];
+}
+
 const FraudOperations = () => {
     const [selectedAlert, setSelectedAlert] = useState<string | null>(null);
     const [filterSeverity, setFilterSeverity] = useState<string>('ALL');
+    const [searchQuery, setSearchQuery] = useState('');
 
-    const filteredAlerts = filterSeverity === 'ALL'
-        ? fraudAlerts
-        : fraudAlerts.filter(a => a.type === filterSeverity);
+    // API data states
+    const [alerts, setAlerts] = useState<Alert[]>([]);
+    const [velocityMetrics, setVelocityMetrics] = useState<VelocityMetric[]>([]);
+    const [defenseStats, setDefenseStats] = useState<DefenseStats | null>(null);
+    const [entityNetwork, setEntityNetwork] = useState<EntityNetwork | null>(null);
+
+    // Loading states
+    const [loadingAlerts, setLoadingAlerts] = useState(false);
+    const [loadingStats, setLoadingStats] = useState(false);
+    const [loadingVelocity, setLoadingVelocity] = useState(false);
+    const [loadingNetwork, setLoadingNetwork] = useState(false);
+
+    // Action states
+    const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+    // Fetch alerts from API
+    const fetchAlerts = useCallback(async () => {
+        setLoadingAlerts(true);
+        try {
+            const response = await fetch(`${API_BASE}/fraud/alerts?severity=${filterSeverity}`);
+            if (response.ok) {
+                const data = await response.json();
+                setAlerts(data.alerts || []);
+            }
+        } catch (error) {
+            console.error('Error fetching alerts:', error);
+        } finally {
+            setLoadingAlerts(false);
+        }
+    }, [filterSeverity]);
+
+    // Fetch defense stats
+    const fetchStats = useCallback(async () => {
+        setLoadingStats(true);
+        try {
+            const response = await fetch(`${API_BASE}/fraud/stats`);
+            if (response.ok) {
+                const data = await response.json();
+                setDefenseStats(data);
+            }
+        } catch (error) {
+            console.error('Error fetching stats:', error);
+        } finally {
+            setLoadingStats(false);
+        }
+    }, []);
+
+    // Fetch velocity metrics
+    const fetchVelocity = useCallback(async () => {
+        setLoadingVelocity(true);
+        try {
+            const response = await fetch(`${API_BASE}/fraud/velocity`);
+            if (response.ok) {
+                const data = await response.json();
+                setVelocityMetrics(data.metrics || []);
+            }
+        } catch (error) {
+            console.error('Error fetching velocity:', error);
+        } finally {
+            setLoadingVelocity(false);
+        }
+    }, []);
+
+    // Fetch entity network
+    const fetchNetwork = useCallback(async () => {
+        setLoadingNetwork(true);
+        try {
+            const response = await fetch(`${API_BASE}/fraud/network/USR-4521`);
+            if (response.ok) {
+                const data = await response.json();
+                setEntityNetwork(data);
+            }
+        } catch (error) {
+            console.error('Error fetching network:', error);
+        } finally {
+            setLoadingNetwork(false);
+        }
+    }, []);
+
+    // Refresh all data
+    const refreshAll = () => {
+        fetchAlerts();
+        fetchStats();
+        fetchVelocity();
+        fetchNetwork();
+    };
+
+    // Initial load
+    useEffect(() => {
+        refreshAll();
+    }, []);
+
+    // Refetch alerts when filter changes
+    useEffect(() => {
+        fetchAlerts();
+    }, [filterSeverity, fetchAlerts]);
+
+    // Update alert status
+    const updateAlertStatus = async (alertId: string, status: string) => {
+        setActionLoading(alertId);
+        try {
+            const response = await fetch(`${API_BASE}/fraud/alerts/${alertId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+            if (response.ok) {
+                fetchAlerts();
+            }
+        } catch (error) {
+            console.error('Error updating alert:', error);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    // Bulk approve low risk
+    const handleBulkApprove = async () => {
+        setActionLoading('bulk-approve');
+        try {
+            const response = await fetch(`${API_BASE}/fraud/bulk-approve`, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                const result = await response.json();
+                alert(`✅ ${result.message}`);
+                fetchAlerts();
+            }
+        } catch (error) {
+            console.error('Error bulk approving:', error);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    // Block suspicious IPs
+    const handleBlockIPs = async () => {
+        setActionLoading('block-ips');
+        try {
+            const response = await fetch(`${API_BASE}/fraud/block-ips`, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                const result = await response.json();
+                alert(`🛡️ ${result.message}`);
+                fetchAlerts();
+            }
+        } catch (error) {
+            console.error('Error blocking IPs:', error);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    // Filter alerts by search
+    const filteredAlerts = alerts.filter(a =>
+        a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        a.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        a.entityId.toLowerCase().includes(searchQuery.toLowerCase())
+    );
 
     const getEntityIcon = (type: string) => {
         switch (type) {
@@ -76,13 +278,25 @@ const FraudOperations = () => {
             animate="visible"
         >
             {/* Header */}
-            <motion.div variants={itemVariants} className="page-header">
-                <h1 className="page-title">
-                    <span className="gradient-text">Fraud Operations</span>
-                </h1>
-                <p className="page-subtitle">
-                    Enterprise-grade threat detection and investigation platform
-                </p>
+            <motion.div variants={itemVariants} className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                    <h1 className="page-title">
+                        <span className="gradient-text">Fraud Operations</span>
+                    </h1>
+                    <p className="page-subtitle">
+                        Enterprise-grade threat detection and investigation platform
+                    </p>
+                </div>
+                <motion.button
+                    className="btn btn-secondary"
+                    onClick={refreshAll}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}
+                >
+                    <RefreshCw size={16} className={loadingAlerts || loadingStats ? 'spin' : ''} />
+                    Refresh Data
+                </motion.button>
             </motion.div>
 
             {/* Defense Engine Stats */}
@@ -96,10 +310,10 @@ const FraudOperations = () => {
                         <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>MODEL STATUS</span>
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 700, color: 'var(--success)' }}>
-                        ACTIVE
+                        {loadingStats ? '...' : 'ACTIVE'}
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 'var(--space-xs)' }}>
-                        {defenseEngineStats.modelVersion}
+                        {defenseStats?.modelVersion || 'Loading...'}
                     </div>
                 </div>
 
@@ -107,9 +321,9 @@ const FraudOperations = () => {
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginBottom: 'var(--space-sm)' }}>
                         ACCURACY
                     </div>
-                    <div className="metric-value">{defenseEngineStats.accuracy}%</div>
+                    <div className="metric-value">{defenseStats?.accuracy || '--'}%</div>
                     <div className="progress-bar" style={{ marginTop: 'var(--space-sm)' }}>
-                        <div className="progress-fill success" style={{ width: `${defenseEngineStats.accuracy}%` }}></div>
+                        <div className="progress-fill success" style={{ width: `${defenseStats?.accuracy || 0}%` }}></div>
                     </div>
                 </div>
 
@@ -120,13 +334,13 @@ const FraudOperations = () => {
                     <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
                         <div>
                             <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 700, color: 'var(--accent-cyan)' }}>
-                                {defenseEngineStats.recall}%
+                                {defenseStats?.recall || '--'}%
                             </div>
                             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>Recall</div>
                         </div>
                         <div>
                             <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 700, color: 'var(--accent-purple)' }}>
-                                {defenseEngineStats.precision}%
+                                {defenseStats?.precision || '--'}%
                             </div>
                             <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>Precision</div>
                         </div>
@@ -139,14 +353,14 @@ const FraudOperations = () => {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-sm)' }}>
                         <span style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 700, color: 'var(--success)' }}>
-                            {defenseEngineStats.alertsBlocked}
+                            {defenseStats?.alertsBlocked || '--'}
                         </span>
                         <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-tertiary)' }}>
-                            / {defenseEngineStats.alertsToday} auto-blocked
+                            / {defenseStats?.alertsToday || '--'} auto-blocked
                         </span>
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', marginTop: 'var(--space-xs)' }}>
-                        Response: {defenseEngineStats.avgResponseTime}
+                        Response: {defenseStats?.avgResponseTime || '--'}
                     </div>
                 </div>
             </motion.div>
@@ -166,7 +380,7 @@ const FraudOperations = () => {
                         <div>
                             <h3 style={{ marginBottom: 'var(--space-xs)' }}>Alert Queue</h3>
                             <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-tertiary)' }}>
-                                {filteredAlerts.length} alerts awaiting review
+                                {loadingAlerts ? 'Loading...' : `${filteredAlerts.length} alerts awaiting review`}
                             </p>
                         </div>
                         <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
@@ -182,6 +396,8 @@ const FraudOperations = () => {
                                 <input
                                     type="text"
                                     placeholder="Search alerts..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
                                     style={{
                                         background: 'transparent',
                                         border: 'none',
@@ -215,68 +431,101 @@ const FraudOperations = () => {
 
                     {/* Alert List */}
                     <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-                        {filteredAlerts.map((alert) => (
-                            <motion.div
-                                key={alert.id}
-                                className="alert-item"
-                                style={{
-                                    margin: 'var(--space-sm) var(--space-md)',
-                                    cursor: 'pointer',
-                                    border: selectedAlert === alert.id ? '1px solid var(--accent-cyan)' : '1px solid transparent',
-                                }}
-                                onClick={() => setSelectedAlert(alert.id)}
-                                whileHover={{ scale: 1.01 }}
-                            >
-                                <div
-                                    className="alert-icon"
-                                    style={{ background: getSeverityBg(alert.type), color: getSeverityColor(alert.type) }}
+                        {loadingAlerts ? (
+                            <div style={{ padding: 'var(--space-xl)', textAlign: 'center' }}>
+                                <Loader2 size={32} className="spin" color="var(--accent-cyan)" />
+                                <p style={{ marginTop: 'var(--space-md)', color: 'var(--text-tertiary)' }}>Loading alerts...</p>
+                            </div>
+                        ) : filteredAlerts.length === 0 ? (
+                            <div style={{ padding: 'var(--space-xl)', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                                No alerts found
+                            </div>
+                        ) : (
+                            filteredAlerts.map((alert) => (
+                                <motion.div
+                                    key={alert.id}
+                                    className="alert-item"
+                                    style={{
+                                        margin: 'var(--space-sm) var(--space-md)',
+                                        cursor: 'pointer',
+                                        border: selectedAlert === alert.id ? '1px solid var(--accent-cyan)' : '1px solid transparent',
+                                    }}
+                                    onClick={() => setSelectedAlert(alert.id)}
+                                    whileHover={{ scale: 1.01 }}
                                 >
-                                    <AlertTriangle size={20} />
-                                </div>
-                                <div className="alert-content">
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
-                                        <span className="alert-title">{alert.title}</span>
-                                        <span
-                                            className="badge"
-                                            style={{
-                                                background: getSeverityBg(alert.type),
-                                                color: getSeverityColor(alert.type),
-                                                fontSize: '10px',
-                                            }}
-                                        >
-                                            {alert.type}
-                                        </span>
-                                    </div>
-                                    <p className="alert-description">{alert.description}</p>
-                                    <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 'var(--space-md)',
-                                        marginTop: 'var(--space-sm)',
-                                        fontSize: 'var(--font-size-xs)',
-                                        color: 'var(--text-muted)',
-                                    }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                            {getEntityIcon(alert.entityType)}
-                                            {alert.entityId}
-                                        </span>
-                                        <span>Risk: {alert.riskScore}%</span>
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--space-sm)' }}>
-                                    <span className="alert-time">{alert.timestamp}</span>
-                                    <span
-                                        className="badge"
-                                        style={{
-                                            background: alert.status === 'RESOLVED' ? 'var(--success-light)' : 'var(--bg-tertiary)',
-                                            color: alert.status === 'RESOLVED' ? 'var(--success)' : 'var(--text-tertiary)',
-                                        }}
+                                    <div
+                                        className="alert-icon"
+                                        style={{ background: getSeverityBg(alert.type), color: getSeverityColor(alert.type) }}
                                     >
-                                        {alert.status}
-                                    </span>
-                                </div>
-                            </motion.div>
-                        ))}
+                                        <AlertTriangle size={20} />
+                                    </div>
+                                    <div className="alert-content">
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
+                                            <span className="alert-title">{alert.title}</span>
+                                            <span
+                                                className="badge"
+                                                style={{
+                                                    background: getSeverityBg(alert.type),
+                                                    color: getSeverityColor(alert.type),
+                                                    fontSize: '10px',
+                                                }}
+                                            >
+                                                {alert.type}
+                                            </span>
+                                        </div>
+                                        <p className="alert-description">{alert.description}</p>
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 'var(--space-md)',
+                                            marginTop: 'var(--space-sm)',
+                                            fontSize: 'var(--font-size-xs)',
+                                            color: 'var(--text-muted)',
+                                        }}>
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                {getEntityIcon(alert.entityType)}
+                                                {alert.entityId}
+                                            </span>
+                                            <span>Risk: {alert.riskScore}%</span>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--space-sm)' }}>
+                                        <span className="alert-time">{alert.timestamp}</span>
+                                        <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                                            {alert.status === 'OPEN' && (
+                                                <>
+                                                    <button
+                                                        className="btn btn-sm"
+                                                        style={{ padding: '4px 8px', fontSize: '10px' }}
+                                                        onClick={(e) => { e.stopPropagation(); updateAlertStatus(alert.id, 'RESOLVED'); }}
+                                                        disabled={actionLoading === alert.id}
+                                                    >
+                                                        {actionLoading === alert.id ? <Loader2 size={12} className="spin" /> : <CheckCircle size={12} />}
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-sm"
+                                                        style={{ padding: '4px 8px', fontSize: '10px' }}
+                                                        onClick={(e) => { e.stopPropagation(); updateAlertStatus(alert.id, 'DISMISSED'); }}
+                                                        disabled={actionLoading === alert.id}
+                                                    >
+                                                        <XCircle size={12} />
+                                                    </button>
+                                                </>
+                                            )}
+                                            <span
+                                                className="badge"
+                                                style={{
+                                                    background: alert.status === 'RESOLVED' ? 'var(--success-light)' : 'var(--bg-tertiary)',
+                                                    color: alert.status === 'RESOLVED' ? 'var(--success)' : 'var(--text-tertiary)',
+                                                }}
+                                            >
+                                                {alert.status}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            ))
+                        )}
                     </div>
                 </motion.div>
 
@@ -284,16 +533,25 @@ const FraudOperations = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
                     {/* Velocity Matrix */}
                     <motion.div variants={itemVariants} className="glass-card">
-                        <h4 style={{ marginBottom: 'var(--space-md)' }}>Velocity Matrix</h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-md)' }}>
+                            <h4>Velocity Matrix</h4>
+                            <button onClick={fetchVelocity} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                                <RefreshCw size={14} className={loadingVelocity ? 'spin' : ''} />
+                            </button>
+                        </div>
                         <div className="velocity-grid">
-                            {velocityMetrics.map((metric) => (
+                            {loadingVelocity ? (
+                                <div style={{ textAlign: 'center', padding: 'var(--space-md)' }}>
+                                    <Loader2 size={20} className="spin" color="var(--accent-cyan)" />
+                                </div>
+                            ) : velocityMetrics.map((metric) => (
                                 <div key={metric.label} className="velocity-cell">
                                     <div className="velocity-label">{metric.label}</div>
                                     <div
                                         className="velocity-value"
                                         style={{
-                                            color: Number(metric.value) > Number(metric.normal) * 1.5 ? 'var(--danger)' :
-                                                Number(metric.value) > Number(metric.normal) ? 'var(--warning)' : 'var(--text-primary)'
+                                            color: Number(String(metric.value).replace(/[^0-9]/g, '')) > Number(metric.normal) * 1.5 ? 'var(--danger)' :
+                                                Number(String(metric.value).replace(/[^0-9]/g, '')) > Number(metric.normal) ? 'var(--warning)' : 'var(--text-primary)'
                                         }}
                                     >
                                         {metric.value}
@@ -321,41 +579,46 @@ const FraudOperations = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
                             <h4>Entity Network</h4>
                             <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)' }}>
-                                {entityNetwork.nodes.length} entities
+                                {entityNetwork?.nodes?.length || 0} entities
                             </span>
                         </div>
                         <div className="network-graph" style={{ height: 200 }}>
-                            {/* Simplified network visualization */}
-                            {entityNetwork.nodes.slice(0, 5).map((node, i) => {
-                                const positions = [
-                                    { x: 100, y: 100 },
-                                    { x: 50, y: 50 },
-                                    { x: 150, y: 50 },
-                                    { x: 50, y: 150 },
-                                    { x: 150, y: 150 },
-                                ];
-                                return (
-                                    <motion.div
-                                        key={node.id}
-                                        className={`network-node ${node.type}`}
-                                        style={{
-                                            left: positions[i]?.x || 100,
-                                            top: positions[i]?.y || 100,
-                                            width: i === 0 ? 50 : 36,
-                                            height: i === 0 ? 50 : 36,
-                                        }}
-                                        initial={{ scale: 0 }}
-                                        animate={{ scale: 1 }}
-                                        transition={{ delay: i * 0.1 }}
-                                        whileHover={{ scale: 1.2 }}
-                                    >
-                                        {node.type === 'user' && <User size={i === 0 ? 24 : 16} color="#fff" />}
-                                        {node.type === 'device' && <Smartphone size={16} color="#fff" />}
-                                        {node.type === 'ip' && <Globe size={16} color="#fff" />}
-                                    </motion.div>
-                                );
-                            })}
-                            {/* Connection lines would go here in a full implementation */}
+                            {loadingNetwork ? (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                                    <Loader2 size={24} className="spin" color="var(--accent-cyan)" />
+                                </div>
+                            ) : (
+                                entityNetwork?.nodes?.slice(0, 5).map((node, i) => {
+                                    const positions = [
+                                        { x: 100, y: 100 },
+                                        { x: 50, y: 50 },
+                                        { x: 150, y: 50 },
+                                        { x: 50, y: 150 },
+                                        { x: 150, y: 150 },
+                                    ];
+                                    return (
+                                        <motion.div
+                                            key={node.id}
+                                            className={`network-node ${node.type}`}
+                                            style={{
+                                                left: positions[i]?.x || 100,
+                                                top: positions[i]?.y || 100,
+                                                width: i === 0 ? 50 : 36,
+                                                height: i === 0 ? 50 : 36,
+                                            }}
+                                            initial={{ scale: 0 }}
+                                            animate={{ scale: 1 }}
+                                            transition={{ delay: i * 0.1 }}
+                                            whileHover={{ scale: 1.2 }}
+                                            title={`${node.label} (Risk: ${node.riskScore}%)`}
+                                        >
+                                            {node.type === 'user' && <User size={i === 0 ? 24 : 16} color="#fff" />}
+                                            {node.type === 'device' && <Smartphone size={16} color="#fff" />}
+                                            {node.type === 'ip' && <Globe size={16} color="#fff" />}
+                                        </motion.div>
+                                    );
+                                })
+                            )}
                         </div>
                     </motion.div>
 
@@ -368,9 +631,11 @@ const FraudOperations = () => {
                                 style={{ width: '100%', justifyContent: 'space-between' }}
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
+                                onClick={handleBulkApprove}
+                                disabled={actionLoading === 'bulk-approve'}
                             >
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                                    <CheckCircle size={18} />
+                                    {actionLoading === 'bulk-approve' ? <Loader2 size={18} className="spin" /> : <CheckCircle size={18} />}
                                     Bulk Approve Low Risk
                                 </span>
                                 <ChevronRight size={18} />
@@ -380,9 +645,11 @@ const FraudOperations = () => {
                                 style={{ width: '100%', justifyContent: 'space-between' }}
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
+                                onClick={handleBlockIPs}
+                                disabled={actionLoading === 'block-ips'}
                             >
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                                    <XCircle size={18} />
+                                    {actionLoading === 'block-ips' ? <Loader2 size={18} className="spin" /> : <XCircle size={18} />}
                                     Block Suspicious IPs
                                 </span>
                                 <ChevronRight size={18} />

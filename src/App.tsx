@@ -11,6 +11,7 @@ import Investments from './pages/Investments';
 import Alerts from './pages/Alerts';
 import Terminal from './pages/Terminal';
 import NewsHub from './pages/NewsHub';
+import AIChat from './pages/AIChat';
 
 function App() {
   return (
@@ -34,6 +35,7 @@ function App() {
                   <Route path="/alerts" element={<Alerts />} />
                   <Route path="/terminal" element={<Terminal />} />
                   <Route path="/news" element={<NewsHub />} />
+                  <Route path="/chat" element={<AIChat />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

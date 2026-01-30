@@ -22,6 +22,16 @@ from services.news_service import (
 )
 from services.terminal_service import run_calculation, CALCULATORS
 from services.ai_service import chat, get_suggestions
+from services.fraud_service import (
+    analyze_transaction,
+    get_alerts,
+    update_alert_status,
+    get_velocity_metrics,
+    get_defense_engine_stats,
+    get_entity_network,
+    bulk_approve_low_risk,
+    block_suspicious_ips
+)
 
 # Create Flask app
 app = Flask(__name__)
@@ -167,6 +177,70 @@ def api_chat_suggestions():
     return jsonify({'suggestions': suggestions, 'page': page})
 
 
+# ========== FRAUD DETECTION ==========
+@app.route('/api/fraud/analyze', methods=['POST'])
+def api_analyze_transaction():
+    """Analyze a transaction for fraud"""
+    data = request.json or {}
+    result = analyze_transaction(data)
+    return jsonify(result)
+
+
+@app.route('/api/fraud/alerts', methods=['GET'])
+def api_get_alerts():
+    """Get fraud alerts"""
+    severity = request.args.get('severity', 'ALL')
+    limit = int(request.args.get('limit', 20))
+    alerts = get_alerts(severity, limit)
+    return jsonify({'alerts': alerts, 'count': len(alerts)})
+
+
+@app.route('/api/fraud/alerts/<alert_id>', methods=['PATCH'])
+def api_update_alert(alert_id):
+    """Update alert status"""
+    data = request.json or {}
+    status = data.get('status', 'OPEN')
+    alert = update_alert_status(alert_id, status)
+    if alert:
+        return jsonify(alert)
+    return jsonify({'error': 'Alert not found'}), 404
+
+
+@app.route('/api/fraud/velocity', methods=['GET'])
+def api_velocity_metrics():
+    """Get velocity metrics for monitoring"""
+    metrics = get_velocity_metrics()
+    return jsonify({'metrics': metrics})
+
+
+@app.route('/api/fraud/stats', methods=['GET'])
+def api_defense_stats():
+    """Get defense engine statistics"""
+    stats = get_defense_engine_stats()
+    return jsonify(stats)
+
+
+@app.route('/api/fraud/network/<user_id>', methods=['GET'])
+def api_entity_network(user_id):
+    """Get entity network for investigation"""
+    network = get_entity_network(user_id)
+    return jsonify(network)
+
+
+@app.route('/api/fraud/bulk-approve', methods=['POST'])
+def api_bulk_approve():
+    """Bulk approve low-risk alerts"""
+    result = bulk_approve_low_risk()
+    return jsonify(result)
+
+
+@app.route('/api/fraud/block-ips', methods=['POST'])
+def api_block_ips():
+    """Block suspicious IPs"""
+    result = block_suspicious_ips()
+    return jsonify(result)
+
+
 # ========== ERROR HANDLERS ==========
 @app.errorhandler(404)
 def not_found(e):
@@ -180,7 +254,7 @@ def server_error(e):
 
 # ========== RUN ==========
 if __name__ == '__main__':
-    print("🚀 Visnova 2.0 Backend starting...")
+    print("🚀 Finova Backend starting...")
     print("📊 Endpoints available:")
     print("   GET  /api/ticker/prices")
     print("   GET  /api/stocks/search")
@@ -188,5 +262,8 @@ if __name__ == '__main__':
     print("   GET  /api/news")
     print("   POST /api/terminal/calculate")
     print("   POST /api/chat")
+    print("   GET  /api/fraud/alerts")
+    print("   POST /api/fraud/analyze")
+    print("   GET  /api/fraud/stats")
     print("-" * 40)
     app.run(debug=Config.DEBUG, port=5000)

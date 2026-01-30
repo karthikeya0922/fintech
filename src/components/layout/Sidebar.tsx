@@ -12,6 +12,7 @@ import {
     LogOut,
     Zap,
     Plus,
+    MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -31,6 +32,17 @@ const Sidebar = () => {
             .join('')
             .toUpperCase()
             .slice(0, 2);
+    };
+
+    // Open AI assistant modal
+    const openAIChat = () => {
+        const event = new CustomEvent('openAIChat', { detail: { newChat: false } });
+        window.dispatchEvent(event);
+    };
+
+    // Start new chat (Full Page)
+    const startNewChat = () => {
+        navigate('/chat', { state: { newChat: true } });
     };
 
     return (
@@ -58,14 +70,22 @@ const Sidebar = () => {
                 {/* Assistant Section */}
                 <div className="nav-section">
                     <div className="nav-section-title">Assistant</div>
-                    <NavLink to="#" className="nav-link">
-                        <Zap className="nav-link-icon" size={18} />
+                    <button
+                        onClick={openAIChat}
+                        className="nav-link"
+                        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                        <MessageSquare className="nav-link-icon" size={18} />
                         <span>Finova AI</span>
-                    </NavLink>
-                    <NavLink to="#" className="nav-link">
+                    </button>
+                    <button
+                        onClick={startNewChat}
+                        className="nav-link"
+                        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
                         <Plus className="nav-link-icon" size={18} />
                         <span>New Chat</span>
-                    </NavLink>
+                    </button>
                 </div>
 
                 {/* Overview Section */}

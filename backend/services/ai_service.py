@@ -7,6 +7,14 @@ import re
 import random
 from typing import Dict, List, Any, Optional
 from config import Config
+from services.stock_service import INDIAN_STOCKS, get_stock_price
+
+# Try to import Groq
+try:
+    from groq import Groq
+    HAS_GROQ = True
+except ImportError:
+    HAS_GROQ = False
 
 # Try to import Google Generative AI
 try:
@@ -27,6 +35,16 @@ class AIAssistant:
     def __init__(self):
         self.gemini_model = None
         self.openai_client = None
+        self.groq_client = None
+
+        # Initialize Groq (Fastest!)
+        groq_key = os.getenv('GROQ_API_KEY', Config.GROQ_API_KEY if hasattr(Config, 'GROQ_API_KEY') else None)
+        if HAS_GROQ and groq_key:
+            try:
+                self.groq_client = Groq(api_key=groq_key)
+                print("✅ Groq AI initialized")
+            except Exception as e:
+                print(f"Groq init error: {e}")
         
         # Initialize Gemini (Free!)
         gemini_key = os.getenv('GEMINI_API_KEY', Config.GEMINI_API_KEY if hasattr(Config, 'GEMINI_API_KEY') else None)
@@ -111,6 +129,37 @@ IMPORTANT: Always use the user's profile data to personalize responses. Referenc
                 'command': command,
                 'isCommand': True
             }
+        
+        # Try Groq first (Fastest!)
+        if self.groq_client:
+            try:
+                messages = [
+                    {"role": "system", "content": self.system_prompt + "\n\n" + context}
+                ]
+                
+                if history:
+                    for msg in history[-5:]:
+                        messages.append({
+                            "role": msg.get('role', 'user'),
+                            "content": msg.get('content', '')
+                        })
+                
+                messages.append({"role": "user", "content": message})
+                
+                completion = self.groq_client.chat.completions.create(
+                    model="llama-3.1-70b-versatile",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=500
+                )
+                
+                return {
+                    'response': completion.choices[0].message.content,
+                    'isCommand': False,
+                    'model': 'groq-llama3'
+                }
+            except Exception as e:
+                print(f"Groq error: {e}")
         
         # Try Gemini first (Free!)
         if self.gemini_model:
@@ -218,7 +267,26 @@ IMPORTANT: Always use the user's profile data to personalize responses. Referenc
         message_lower = message.lower()
         
         # Smart response based on question type
-        if any(word in message_lower for word in ['saving', 'save', 'savings']):
+        
+        # Stock Recommendations (Dynamic)
+        if any(word in message_lower for word in ['company', 'companies', 'stock', 'share', 'recommend', 'buy', 'invest in']):
+            # Pick 2 random stocks
+            stocks = list(INDIAN_STOCKS.keys())
+            random.shuffle(stocks)
+            selected = stocks[:2]
+            
+            details = []
+            for sym in selected:
+                data = get_stock_price(sym)
+                if data:
+                    price = data.get('price', 0)
+                    change = data.get('changePercent', 0)
+                    trend = "📈" if change >= 0 else "📉"
+                    details.append(f"{data['name']} (₹{price:,} {trend} {change}%)")
+            
+            response = f"Current market trends suggest looking at blue-chip stocks. Right now:\n\n• {details[0]}\n• {details[1]}\n\nGiven your risk profile, these could be good additions for long-term growth. Always do your own research!"
+
+        elif any(word in message_lower for word in ['saving', 'save', 'savings']):
             if savings_rate >= 30:
                 response = f"Great news, {name}! You're saving ₹{savings:,} monthly - that's a {savings_rate}% savings rate, which is excellent! 🎉 Consider investing more in equity mutual funds for long-term growth."
             elif savings_rate >= 20:
@@ -237,7 +305,7 @@ IMPORTANT: Always use the user's profile data to personalize responses. Referenc
             else:
                 response += "You're managing expenses well! Keep tracking to maintain this."
         
-        elif any(word in message_lower for word in ['portfolio', 'invest', 'investment']):
+        elif any(word in message_lower for word in ['portfolio', 'invest', 'investment']) and 'what' not in message_lower:
             response = f"Your current portfolio value is ₹{portfolio:,}. "
             if portfolio > 500000:
                 response += "Great progress! Consider diversifying across equity, debt, and gold."
