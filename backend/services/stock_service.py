@@ -19,15 +19,18 @@ except ImportError:
 # Alpha Vantage API key
 ALPHA_VANTAGE_KEY = os.getenv('ALPHA_VANTAGE_KEY', '8P11NVMOYR5AZ8AU')
 ALPHA_VANTAGE_BASE = 'https://www.alphavantage.co/query'
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyBYrYI61xCdmBGgzGPWRDF0UP2Fl9GEW48')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
 # Try to import Gemini
 gemini_model = None
 try:
     import google.generativeai as genai
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    print("✅ Gemini AI configured for stock predictions")
+    if GEMINI_API_KEY:
+        genai.configure(api_key=GEMINI_API_KEY)
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+        print("✅ Gemini AI configured for stock predictions")
+    else:
+        print("⚠️ Gemini API Key not found in environment variables")
 except Exception as e:
     print(f"⚠️ Gemini not available: {e}")
 
