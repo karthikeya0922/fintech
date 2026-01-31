@@ -4,16 +4,11 @@ import {
     TrendingUp,
     TrendingDown,
     Plus,
-    X,
     Sparkles,
     RefreshCw,
     ChevronDown,
     ShieldCheck,
-    Clock,
-    Zap,
-    Activity,
-    BarChart2,
-    Target
+    Activity
 } from 'lucide-react';
 import {
     Chart as ChartJS,
@@ -90,25 +85,22 @@ interface PredictionResult {
     predictions: Prediction[];
     predictedChange: number;
     confidence: number;
-    trend: 'bullish' | 'bearish';
+    trend: 'bullish' | 'bearish' | 'neutral';
     signal: 'BUY' | 'SELL' | 'HOLD';
+    source?: string;
     indicators: {
         rsi: number;
         macd: number;
         volatility: number;
-        trendStrength: number;
-        sma5: number;
-        sma20: number;
-        momentum: number;
+        trendStrength?: number;
+        sma5?: number;
+        sma20?: number;
+        momentum?: number;
     };
     lastUpdated: number;
 }
 
-interface StockPricePrice {
-    price: number;
-    source: string;
-    timestamp: number;
-}
+
 
 interface AggregatedPrice {
     ltp: number;
@@ -122,7 +114,7 @@ const INDIAN_STOCKS = [
     { symbol: 'RELIANCE', name: 'Reliance Industries' },
     { symbol: 'TCS', name: 'Tata Consultancy Services' },
     { symbol: 'INFY', name: 'Infosys' },
-    { symbol: 'HDFC', name: 'HDFC Bank' },
+    { symbol: 'HDFCBANK', name: 'HDFC Bank' },
     { symbol: 'ICICIBANK', name: 'ICICI Bank' },
     { symbol: 'SBIN', name: 'State Bank of India' },
     { symbol: 'WIPRO', name: 'Wipro' },
@@ -137,7 +129,7 @@ const INITIAL_HOLDINGS: Holding[] = [
     { id: '1', symbol: 'RELIANCE', name: 'Reliance Industries', type: 'STOCK', price: 1285.50, holdings: 10, value: 12855, change: 1.28, color: '#6366f1' },
     { id: '2', symbol: 'TCS', name: 'Tata Consultancy', type: 'STOCK', price: 3842.30, holdings: 5, value: 19211.5, change: -0.85, color: '#10b981' },
     { id: '3', symbol: 'INFY', name: 'Infosys', type: 'STOCK', price: 1523.75, holdings: 15, value: 22856.25, change: 2.15, color: '#f59e0b' },
-    { id: '4', symbol: 'HDFC', name: 'HDFC Bank', type: 'STOCK', price: 1620.40, holdings: 8, value: 12963.2, change: 0.45, color: '#ef4444' },
+    { id: '4', symbol: 'HDFCBANK', name: 'HDFC Bank', type: 'STOCK', price: 1620.40, holdings: 8, value: 12963.2, change: 0.45, color: '#ef4444' },
 ];
 
 const normalizeSymbol = (symbol: string) => {
@@ -326,7 +318,7 @@ const Investments = () => {
     // --- STATE ---
     const [holdings, setHoldings] = useState<Holding[]>(INITIAL_HOLDINGS);
     const [selectedStock, setSelectedStock] = useState('RELIANCE');
-    const [chartPeriod, setChartPeriod] = useState('3M'); // Default to 3M for better analysis data
+    const [chartPeriod] = useState('3M'); // Default to 3M for better analysis data
     const [chartData, setChartData] = useState<ChartPoint[]>([]);
     const [predictionData, setPredictionData] = useState<ChartPoint[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -341,153 +333,234 @@ const Investments = () => {
     const [isRefreshing, setIsRefreshing] = useState(false);
 
     // Refs
-    const mountedRef = useRef(true);
-    const lastPriceRef = useRef<number | null>(null);
+    // const mountedRef = useRef(true); // Unused
     const lastFetchTimeRef = useRef<number>(0);
     const predictionCacheRef = useRef<Record<string, PredictionResult>>({});
 
     // --------------------------------------------
     // 1. REAL-TIME PRICE FETCHING
     // --------------------------------------------
-    const fetchRealTimePrice = useCallback(async (force = false) => {
-        const now = Date.now();
-        // 15s Cache
-        if (!force && now - lastFetchTimeRef.current < 15000 && rtPrice) return;
+    // --------------------------------------------
+    // 2. REAL-TIME PRICE FETCHING (PROGRESSIVE)
+    // --------------------------------------------
+    const [loadingStocks, setLoadingStocks] = useState<Set<string>>(new Set());
 
-        setIsRefreshing(true);
-        const symbol = normalizeSymbol(selectedStock);
+    const fetchPriceForStock = async (symbol: string) => {
+        // Prevent duplicate fetches
+        if (loadingStocks.has(symbol)) return;
 
-        // Fast Tier: Finnhub + FMP
-        const fetchers = [
-            (async () => {
-                if (!KEYS.FINNHUB) return null;
-                try {
-                    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${KEYS.FINNHUB}`);
-                    const d = await r.json();
-                    if (d.c > 0) return { price: d.c, source: 'Finnhub', timestamp: now };
-                } catch { } return null;
-            })(),
-            (async () => {
-                if (!KEYS.FMP) return null;
-                try {
-                    const r = await fetch(`https://financialmodelingprep.com/api/v3/quote-short/${symbol}?apikey=${KEYS.FMP}`);
-                    const d = await r.json();
-                    if (Array.isArray(d) && d[0]?.price) return { price: d[0].price, source: 'FMP', timestamp: now };
-                } catch { } return null;
-            })()
-        ];
+        setLoadingStocks(prev => new Set(prev).add(symbol));
+        const normalized = normalizeSymbol(symbol);
 
-        let results = await Promise.all(fetchers);
-        let valid = results.filter((r): r is StockPricePrice => r !== null);
-
-        // Fallback Tier: Alpha Vantage
-        if (valid.length === 0 && KEYS.ALPHAVANTAGE) {
+        try {
+            // Try own backend first (proxy to optimized yfinance)
             try {
-                const r = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${KEYS.ALPHAVANTAGE}`);
+                const res = await fetch(`http://localhost:5000/api/stocks/${symbol}/price`, {
+                    signal: AbortSignal.timeout(5000)
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.price) {
+                        setHoldings(prev => prev.map(h => {
+                            if (h.symbol === symbol) {
+                                const change = data.changePercent !== undefined ? data.changePercent : 0;
+                                return {
+                                    ...h,
+                                    price: data.price,
+                                    value: data.price * h.holdings,
+                                    change: parseFloat(change.toFixed(2))
+                                };
+                            }
+                            return h;
+                        }));
+                        setLoadingStocks(prev => {
+                            const next = new Set(prev);
+                            next.delete(symbol);
+                            return next;
+                        });
+                        return; // Success
+                    }
+                }
+            } catch (e) {
+                // Backend failed, fall back to external APIs if keys exist
+            }
+
+            // Fallback: Finnhub/FMP (Client side)
+            let price = 0;
+            if (KEYS.FINNHUB) {
+                const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${normalized}&token=${KEYS.FINNHUB}`);
                 const d = await r.json();
-                const q = d['Global Quote'];
-                if (q && q['05. price']) valid.push({ price: parseFloat(q['05. price']), source: 'AV', timestamp: now });
-            } catch { }
-        }
+                if (d.c) price = d.c;
+            }
 
-        if (!mountedRef.current) return;
+            if (price > 0) {
+                setHoldings(prev => prev.map(h => {
+                    if (h.symbol === symbol) {
+                        return {
+                            ...h,
+                            price: price,
+                            value: price * h.holdings
+                        };
+                    }
+                    return h;
+                }));
+            }
 
-        if (valid.length > 0) {
-            valid.sort((a, b) => a.price - b.price);
-            const median = valid.length % 2 !== 0
-                ? valid[Math.floor(valid.length / 2)].price
-                : (valid[valid.length / 2 - 1].price + valid[valid.length / 2].price) / 2;
-
-            lastPriceRef.current = median;
-            lastFetchTimeRef.current = now;
-            setRtPrice({
-                ltp: median,
-                confidence: valid.length >= 2 ? 'HIGH' : 'LOW',
-                timestamp: now,
-                sources: valid.length,
-                isCached: false
+        } catch (e) {
+            console.warn(`Failed to fetch ${symbol}`, e);
+        } finally {
+            setLoadingStocks(prev => {
+                const next = new Set(prev);
+                next.delete(symbol);
+                return next;
             });
-        } else if (lastPriceRef.current) {
-            // Keep showing old price if fetch fails
-            setRtPrice(prev => prev ? { ...prev, isCached: true } : null);
         }
-        setIsRefreshing(false);
-    }, [selectedStock, rtPrice]);
+    };
+
+    const fetchRealTimePrice = useCallback(async (force = false) => {
+        // Refresh all holdings in parallel
+        holdings.forEach(stock => {
+            fetchPriceForStock(stock.symbol);
+        });
+
+        // Also fetch selected stock for big display
+        if (selectedStock) {
+            // Re-use logic or just rely on the holding update if it's in holdings
+            // For the big display "rtPrice", we keep the old logic or link it to holdings
+            // For now, let's keep the old logic for "Real Time Price" display to avoid breaking it, 
+            // but wrapped in a check
+            const now = Date.now();
+            if (!force && now - lastFetchTimeRef.current < 15000 && rtPrice) return;
+
+            setIsRefreshing(true);
+            try {
+                // ... (Existing logic for single selected stock display if needed, 
+                // but relying on backend is better now)
+                const res = await fetch(`http://localhost:5000/api/stocks/${selectedStock}/price`);
+                if (res.ok) {
+                    const d = await res.json();
+                    setRtPrice({
+                        ltp: d.price,
+                        confidence: 'HIGH',
+                        timestamp: now,
+                        sources: 1,
+                        isCached: d.is_cached
+                    });
+                }
+            } catch { }
+            setIsRefreshing(false);
+        }
+    }, [selectedStock, holdings, rtPrice]);
 
     // --------------------------------------------
     // 2. CHART & ANALYSIS ENGINE
     // --------------------------------------------
     const fetchChartData = useCallback(async () => {
         setIsLoading(true);
-        const symbol = normalizeSymbol(selectedStock);
+        // Use raw symbol for API call (backend handles .NS suffix internally)
         let rawData: ChartPoint[] = [];
 
-        // Primary: FMP Historical (Fast, Full History)
-        if (KEYS.FMP) {
+        try {
+            // Primary: Backend yfinance (Most reliable)
             try {
-                const res = await fetch(`https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}?apikey=${KEYS.FMP}`);
-                const d = await res.json();
-                if (d.historical) {
-                    rawData = d.historical.map((x: any) => ({ date: x.date, price: x.close })).reverse();
+                const res = await fetch(`http://localhost:5000/api/stocks/${selectedStock}/chart?period=${chartPeriod}`, {
+                    signal: AbortSignal.timeout(8000)
+                });
+                if (res.ok) {
+                    const d = await res.json();
+                    if (d.data && Array.isArray(d.data)) {
+                        rawData = d.data;
+                    }
                 }
-            } catch (e) { console.warn("FMP Chart Fail", e); }
-        }
-
-        // Secondary: Alpha Vantage (If FMP fails)
-        if (rawData.length === 0 && KEYS.ALPHAVANTAGE) {
-            try {
-                const res = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${KEYS.ALPHAVANTAGE}&outputsize=compact`);
-                const d = await res.json();
-                const ts = d['Time Series (Daily)'];
-                if (ts) {
-                    // Convert AV object to array
-                    rawData = Object.keys(ts).sort().map(date => ({
-                        date,
-                        price: parseFloat(ts[date]['4. close'])
-                    }));
-                }
-            } catch (e) { console.warn("AV Chart Fail", e); }
-        }
-
-        if (rawData.length > 0) {
-            // --- EXECUTE PREDICTION ENGINE ---
-            const prices = rawData.map(d => d.price);
-
-            // Analyze using full history available
-            const predResult = predictPrice(prices);
-
-            if (predResult) {
-                predResult.symbol = selectedStock;
-                setPrediction(predResult);
-                predictionCacheRef.current[selectedStock] = predResult;
-
-                // If chart is already showing prediction, update it live
-                if (showPrediction) updatePredictionGraph(predResult);
+            } catch (e) {
+                console.warn("Backend Chart Fail", e);
             }
 
-            // --- FILTER FOR CHART DISPLAY ---
-            // We analyze huge history but only show what user asked (1M, 3M, etc)
-            let daysToSub = 30;
-            switch (chartPeriod) {
-                case '1D': daysToSub = 2; break; // Approximations for daily chart using eod data
-                case '1W': daysToSub = 7; break;
-                case '1M': daysToSub = 30; break;
-                case '3M': daysToSub = 90; break;
-                case '1Y': daysToSub = 365; break;
+            // Fallback: FMP (Client side)
+            if (rawData.length === 0 && KEYS.FMP) {
+                try {
+                    const res = await fetch(`https://financialmodelingprep.com/api/v3/historical-price-full/${normalizeSymbol(selectedStock)}?apikey=${KEYS.FMP}`);
+                    const d = await res.json();
+                    if (d.historical) {
+                        rawData = d.historical.map((x: any) => ({ date: x.date, price: x.close })).reverse();
+                    }
+                } catch (e) { console.warn("FMP Chart Fail", e); }
             }
 
-            setChartData(rawData.slice(-daysToSub));
+            if (rawData.length > 0) {
+                // --- EXECUTE PREDICTION ENGINE ---
+                const prices = rawData.map(d => d.price);
+
+                // Call Backend ML Predictor
+                try {
+                    const mlRes = await fetch('http://localhost:5000/api/stocks/predict', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol: selectedStock, days: 7 })
+                    });
+
+                    if (mlRes.ok) {
+                        const predResult: PredictionResult = await mlRes.json();
+                        // Add signal logic (simple frontend logic based on backend data)
+                        if (!predResult.signal) {
+                            if (predResult.trend === 'bullish' && predResult.confidence > 60) predResult.signal = 'BUY';
+                            else if (predResult.trend === 'bearish' && predResult.confidence > 60) predResult.signal = 'SELL';
+                            else predResult.signal = 'HOLD';
+                        }
+
+                        setPrediction(predResult);
+                        predictionCacheRef.current[selectedStock] = predResult;
+                        if (showPrediction) updatePredictionGraph(predResult, prices[prices.length - 1]);
+                    } else {
+                        // Fallback to local if backend fails
+                        const predResult = predictPrice(prices); // Keep local as fallback
+                        if (predResult) {
+                            setPrediction(predResult);
+                            predictionCacheRef.current[selectedStock] = predResult;
+                            if (showPrediction) updatePredictionGraph(predResult, prices[prices.length - 1]);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("ML Predict fail", e);
+                    const predResult = predictPrice(prices);
+                    if (predResult) setPrediction(predResult);
+                }
+
+                // --- FILTER FOR CHART DISPLAY ---
+                // We analyze huge history but only show what user asked (1M, 3M, etc)
+                let daysToSub = 30;
+                switch (chartPeriod) {
+                    case '1D': daysToSub = 2; break; // Approximations for daily chart using eod data
+                    case '1W': daysToSub = 7; break;
+                    case '1M': daysToSub = 30; break;
+                    case '3M': daysToSub = 90; break;
+                    case '1Y': daysToSub = 365; break;
+                }
+
+                setChartData(rawData.slice(-daysToSub));
+            }
+        } finally {
+            setIsLoading(false);
         }
-        setIsLoading(false);
     }, [selectedStock, chartPeriod, showPrediction]);
 
-    // Helper to format prediction points
-    const updatePredictionGraph = (pred: PredictionResult) => {
-        const points = pred.predictions.map(p => {
+    // Helper to format prediction points - starts from chart's last price
+    const updatePredictionGraph = (pred: PredictionResult, basePrice?: number) => {
+        // Use basePrice from chart data, or fall back to pred.currentPrice
+        const startPrice = basePrice || pred.currentPrice || pred.predictions[0]?.predicted || 0;
+
+        // Recalculate prediction points based on daily change from predictedChange
+        const dailyChange = (pred.predictedChange / 7) / 100;
+        const points = [];
+        let val = startPrice;
+
+        for (let i = 0; i < 7; i++) {
+            val = val * (1 + dailyChange);
             const d = new Date();
-            d.setDate(d.getDate() + p.day);
-            return { date: d.toLocaleDateString(), price: p.predicted };
-        });
+            d.setDate(d.getDate() + i + 1);
+            points.push({ date: d.toLocaleDateString(), price: Math.round(val * 100) / 100 });
+        }
+
         setPredictionData(points);
     };
 
@@ -496,7 +569,7 @@ const Investments = () => {
     // --------------------------------------------
     useEffect(() => {
         fetchRealTimePrice(true);
-        // Polling every 10s
+        // Polling every 10s as requested
         const i = setInterval(() => fetchRealTimePrice(), 10000);
         return () => clearInterval(i);
     }, [fetchRealTimePrice]);
@@ -505,15 +578,44 @@ const Investments = () => {
         fetchChartData();
     }, [fetchChartData]);
 
-    const handlePredictClick = () => {
+    const handlePredictClick = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
         if (showPrediction) {
             setShowPrediction(false);
             return;
         }
-        // Force update graph if we have prediction
-        if (prediction) {
-            updatePredictionGraph(prediction);
-            setShowPrediction(true);
+
+        // Always fetch fresh predictions to avoid stale cache
+        setShowPrediction(true);
+        setIsLoading(true);
+
+        try {
+            const mlRes = await fetch('http://localhost:5000/api/stocks/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol: selectedStock, days: 7 })
+            });
+
+            if (mlRes.ok) {
+                const predResult: PredictionResult = await mlRes.json();
+                // Add signal logic
+                if (!predResult.signal) {
+                    if (predResult.trend === 'bullish' && predResult.confidence > 60) predResult.signal = 'BUY';
+                    else if (predResult.trend === 'bearish' && predResult.confidence > 60) predResult.signal = 'SELL';
+                    else predResult.signal = 'HOLD';
+                }
+                setPrediction(predResult);
+                predictionCacheRef.current[selectedStock] = predResult;
+                // Use chart's last price for visual consistency
+                const basePrice = chartData.length > 0 ? chartData[chartData.length - 1].price : undefined;
+                updatePredictionGraph(predResult, basePrice);
+            }
+        } catch (err) {
+            console.warn("Prediction fetch failed", err);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -613,7 +715,7 @@ const Investments = () => {
                         </div>
 
                         <div className="chart-controls">
-                            <button className={`ai-predict-btn ${showPrediction ? 'active' : ''}`} onClick={handlePredictClick}>
+                            <button type="button" className={`ai-predict-btn ${showPrediction ? 'active' : ''}`} onClick={handlePredictClick}>
                                 <Activity size={14} />
                                 {showPrediction ? 'Hide Analysis' : 'AI Forecast'}
                             </button>
@@ -639,136 +741,189 @@ const Investments = () => {
                         </div>
                     </div>
 
-                    <div className="stock-info mb-4">
-                        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-                            <div>
-                                <h2 className="text-3xl font-bold text-white mb-1">{selectedStock}</h2>
-                                <h3 className="text-gray-400 text-sm mb-2">{INDIAN_STOCKS.find(s => s.symbol === selectedStock)?.name}</h3>
-                                <div className="flex items-center gap-3">
-                                    {rtPrice ? (
-                                        <>
-                                            <span className="text-4xl font-mono mobile-price text-white">₹{rtPrice.ltp.toLocaleString()}</span>
-                                            <span className={`px-2 py-1 rounded text-xs border font-bold flex items-center gap-1 ${rtPrice.confidence === 'HIGH' ? 'border-green-800 text-green-400 bg-green-900/20' : 'border-yellow-800 text-yellow-400 bg-yellow-900/20'}`}>
-                                                <ShieldCheck size={12} />
-                                                {rtPrice.confidence}
-                                            </span>
-                                            <span className="text-xs text-gray-500">{rtPrice.sources} Src</span>
-                                        </>
-                                    ) : (
-                                        <span className="text-gray-500 italic">Syncing live prices...</span>
-                                    )}
+                    {/* Chart with AI Panel Sidebar */}
+                    <div className="chart-with-ai-wrapper">
+                        {/* Main Chart */}
+                        <div className="chart-container">
+                            {isLoading && !showPrediction ? (
+                                <div className="h-full w-full flex items-center justify-center text-gray-500 flex-col gap-2">
+                                    <RefreshCw className="spin" />
+                                    <span className="text-xs">Analyzing Market Data...</span>
                                 </div>
-                            </div>
+                            ) : (
+                                <Line data={chartConfig} options={chartOptions} />
+                            )}
+                        </div>
 
-                            {/* ADVANCED PREDICTION PANEL */}
+                        {/* AI Analysis Panel - Right Sidebar */}
+                        <AnimatePresence>
                             {showPrediction && prediction && (
-                                <div className="w-full md:w-auto flex flex-col gap-2 p-3 bg-gray-900/80 rounded-lg border border-gray-800 text-sm min-w-[240px] backdrop-blur-md shadow-xl">
-                                    {/* Header Signal */}
-                                    <div className="flex justify-between items-center border-b border-gray-700 pb-2">
-                                        <span className="text-gray-400 text-xs uppercase tracking-wider">AI Signal</span>
-                                        <div className={`flex items-center gap-1 font-bold px-3 py-0.5 rounded ${prediction.signal === 'BUY' ? 'bg-green-500 text-black' :
-                                                prediction.signal === 'SELL' ? 'bg-red-500 text-black' : 'bg-gray-600 text-white'
-                                            }`}>
-                                            {prediction.signal === 'BUY' ? <TrendingUp size={14} /> : prediction.signal === 'SELL' ? <TrendingDown size={14} /> : <Activity size={14} />}
-                                            {prediction.signal}
-                                        </div>
-                                    </div>
-
-                                    {/* Indicators Grid */}
-                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs py-1">
-                                        <span className="text-gray-500">RSI (14)</span>
-                                        <span className={`text-right font-mono ${prediction.indicators.rsi > 70 ? 'text-red-400' : prediction.indicators.rsi < 30 ? 'text-green-400' : 'text-gray-300'}`}>
-                                            {prediction.indicators.rsi.toFixed(1)}
-                                        </span>
-
-                                        <span className="text-gray-500">MACD</span>
-                                        <span className={`text-right font-mono ${prediction.indicators.macd > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                            {prediction.indicators.macd.toFixed(2)}
-                                        </span>
-
-                                        <span className="text-gray-500">Volatilty</span>
-                                        <span className="text-right font-mono text-blue-300">{prediction.indicators.volatility.toFixed(1)}%</span>
-
-                                        <span className="text-gray-500">Trend</span>
-                                        <span className={`text-right font-mono ${prediction.indicators.trendStrength > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                            {(prediction.indicators.trendStrength * 100).toFixed(2)}%
-                                        </span>
-                                    </div>
-
-                                    {/* Footer Target */}
-                                    <div className="pt-2 mt-1 border-t border-gray-700">
-                                        <div className="flex justify-between items-center text-xs">
-                                            <span className="text-gray-400">7D Target</span>
-                                            <div className="text-right">
-                                                <span className={`block font-bold text-sm ${prediction.predictedChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                                    ₹{prediction.predictions[6].predicted.toFixed(0)}
-                                                </span>
-                                                <span className="text-[10px] text-gray-500 block">
-                                                    {prediction.predictedChange > 0 ? '+' : ''}{prediction.predictedChange.toFixed(1)}%
-                                                </span>
+                                <motion.div
+                                    initial={{ opacity: 0, x: 20 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: 20 }}
+                                    transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                                    className="ai-analysis-panel"
+                                >
+                                    {/* Header */}
+                                    <div className="ai-panel-header">
+                                        <div className="flex items-center gap-3">
+                                            <div className="ai-icon-wrapper">
+                                                <Sparkles size={16} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-bold text-white tracking-wide">AI Analysis</h3>
+                                                <span className="text-[10px] text-cyan-400/80 font-medium">{prediction.source || 'Gemini 1.5 Flash'}</span>
                                             </div>
                                         </div>
+                                        <motion.div
+                                            className={`ai-signal-badge ${prediction.signal === 'BUY' ? 'buy' : prediction.signal === 'SELL' ? 'sell' : 'hold'}`}
+                                            animate={{ scale: [1, 1.05, 1] }}
+                                            transition={{ repeat: Infinity, duration: 2 }}
+                                        >
+                                            {prediction.signal === 'BUY' && <TrendingUp size={12} />}
+                                            {prediction.signal === 'SELL' && <TrendingDown size={12} />}
+                                            {prediction.signal}
+                                        </motion.div>
                                     </div>
-                                </div>
+
+                                    {/* Indicator Cards Grid */}
+                                    <div className="ai-indicators-grid">
+                                        <div className={`ai-indicator-card ${prediction.indicators.rsi > 70 ? 'danger' : prediction.indicators.rsi < 30 ? 'success' : ''}`}>
+                                            <span className="label">RSI (14)</span>
+                                            <span className="value">{prediction.indicators.rsi?.toFixed(1) || '--'}</span>
+                                            <span className="status">{prediction.indicators.rsi > 70 ? 'Overbought' : prediction.indicators.rsi < 30 ? 'Oversold' : 'Neutral'}</span>
+                                        </div>
+                                        <div className={`ai-indicator-card ${(prediction.indicators.macd ?? 0) > 0 ? 'success' : 'danger'}`}>
+                                            <span className="label">MACD</span>
+                                            <span className="value">{prediction.indicators.macd?.toFixed(2) || '0.00'}</span>
+                                            <span className="status">{(prediction.indicators.macd ?? 0) > 0 ? 'Bullish' : 'Bearish'}</span>
+                                        </div>
+                                        <div className="ai-indicator-card">
+                                            <span className="label">Volatility</span>
+                                            <span className="value">{prediction.indicators.volatility?.toFixed(1) || '0.0'}%</span>
+                                            <span className="status">{(prediction.indicators.volatility ?? 0) > 30 ? 'High' : 'Normal'}</span>
+                                        </div>
+                                        <div className={`ai-indicator-card ${prediction.trend === 'bullish' ? 'success' : 'danger'}`}>
+                                            <span className="label">Trend</span>
+                                            <span className="value">{prediction.trend === 'bullish' ? '📈' : '📉'}</span>
+                                            <span className="status capitalize">{prediction.trend}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* 7-Day Forecast Section */}
+                                    <div className="ai-forecast-section">
+                                        <div className="forecast-header">
+                                            <span>7-Day Price Forecast</span>
+                                            <div className="confidence-badge">
+                                                <ShieldCheck size={10} />
+                                                {prediction.confidence}% confidence
+                                            </div>
+                                        </div>
+                                        <div className="forecast-price">
+                                            <span className={`price ${prediction.predictedChange >= 0 ? 'up' : 'down'}`}>
+                                                ₹{Number(prediction.predictions[prediction.predictions.length - 1]?.predicted || prediction.currentPrice || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                            </span>
+                                            <span className={`change ${prediction.predictedChange >= 0 ? 'up' : 'down'}`}>
+                                                {prediction.predictedChange >= 0 ? '+' : ''}{Number(prediction.predictedChange || 0).toFixed(2)}%
+                                                {prediction.predictedChange >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                                            </span>
+                                        </div>
+                                        {/* Confidence Bar */}
+                                        <div className="confidence-bar-wrapper">
+                                            <motion.div
+                                                className="confidence-bar"
+                                                initial={{ width: 0 }}
+                                                animate={{ width: `${prediction.confidence}%` }}
+                                                transition={{ duration: 1, ease: "easeOut" }}
+                                            />
+                                        </div>
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+
+                    {/* Stock Info Below Chart */}
+                    <div className="stock-info-compact">
+                        <div>
+                            <h2 className="text-2xl font-bold text-white">{selectedStock}</h2>
+                            <span className="text-gray-400 text-sm">{INDIAN_STOCKS.find(s => s.symbol === selectedStock)?.name}</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            {rtPrice && (
+                                <>
+                                    <span className="text-3xl font-mono text-white">₹{rtPrice.ltp.toLocaleString()}</span>
+                                    <span className={`px-2 py-1 rounded text-xs font-bold ${rtPrice.confidence === 'HIGH' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'}`}>
+                                        {rtPrice.confidence}
+                                    </span>
+                                </>
                             )}
                         </div>
                     </div>
 
-                    <div className="chart-container h-[400px]">
-                        {isLoading && !showPrediction ? (
-                            <div className="h-full w-full flex items-center justify-center text-gray-500 flex-col gap-2">
-                                <RefreshCw className="spin" />
-                                <span className="text-xs">Analyzing Market Data...</span>
-                            </div>
-                        ) : (
-                            <Line data={chartConfig} options={chartOptions} />
-                        )}
-                    </div>
-                </div>
-
-                {/* Right Panel: Holdings */}
-                <div className="right-panel">
-                    <div className="holdings-section">
-                        <div className="holdings-header">
-                            <h3>Holdings</h3>
-                            <button className="add-asset-btn" onClick={() => setShowAddModal(true)}><Plus size={16} /> Add</button>
-                        </div>
-                        <div className="holdings-table">
-                            <div className="table-header flex justify-between text-xs text-gray-500 mb-2 px-2">
-                                <span>ASSET</span>
-                                <span>VALUE</span>
-                            </div>
-                            {holdings.map(h => (
-                                <div key={h.id} className="table-row flex justify-between items-center p-3 bg-gray-900/30 rounded mb-2 hover:bg-gray-800/50 transition-colors">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: h.color }}>
-                                            {h.symbol.slice(0, 2)}
-                                        </div>
-                                        <div>
-                                            <div className="font-bold text-white text-sm">{h.symbol}</div>
-                                            <div className="text-xs text-gray-500">{h.holdings} Units</div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="font-mono text-white text-sm">₹{h.value.toLocaleString()}</div>
-                                        <div className={`text-xs ${h.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                            {h.change >= 0 ? '+' : ''}{h.change}%
-                                        </div>
-                                    </div>
+                    {/* Right Panel: Holdings */}
+                    <div className="right-panel">
+                        <div className="portfolio-panel">
+                            <div className="portfolio-header">
+                                <div>
+                                    <h3>Your Portfolio</h3>
+                                    <p>{holdings.length} Assets</p>
                                 </div>
-                            ))}
+                                <button
+                                    onClick={() => setShowAddModal(true)}
+                                    className="add-btn"
+                                >
+                                    <Plus size={16} />
+                                </button>
+                            </div>
+
+                            <div className="holdings-list">
+                                {holdings.map(h => (
+                                    <div key={h.id} className="holding-card">
+                                        <div className="holding-left">
+                                            <div
+                                                className="holding-icon"
+                                                style={{
+                                                    background: `linear-gradient(135deg, ${h.color}40, ${h.color}20)`,
+                                                    color: h.color,
+                                                    border: `1px solid ${h.color}50`
+                                                }}
+                                            >
+                                                {h.symbol.slice(0, 2)}
+                                            </div>
+                                            <div className="holding-info">
+                                                <span className="holding-symbol">{h.symbol}</span>
+                                                <span className="holding-units">{h.holdings} UNITS</span>
+                                            </div>
+                                        </div>
+                                        <div className="holding-right">
+                                            <span className="holding-value">₹{h.value.toLocaleString()}</span>
+                                            <span className={`holding-change ${h.change > 0 ? 'up' : h.change < 0 ? 'down' : ''}`}>
+                                                {h.change > 0 && <TrendingUp size={10} />}
+                                                {h.change < 0 && <TrendingDown size={10} />}
+                                                {h.change > 0 ? '+' : ''}{h.change.toFixed(2)}%
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                <div className="add-asset-card">
+                                    + Add another asset
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <AnimatePresence>
-                {showAddModal && (
-                    <motion.div className="modal-overlay" onClick={() => setShowAddModal(false)}>
-                        {/* Placeholder Modal */}
-                    </motion.div>
-                )}
-            </AnimatePresence>
+                <AnimatePresence>
+                    {showAddModal && (
+                        <motion.div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+                            {/* Placeholder Modal */}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
         </div>
     );
 };

@@ -57,7 +57,7 @@ INDIAN_STOCKS = {
     'RELIANCE': {'name': 'Reliance Industries', 'symbol': 'RELIANCE.NS'},
     'TCS': {'name': 'Tata Consultancy Services', 'symbol': 'TCS.NS'},
     'INFY': {'name': 'Infosys', 'symbol': 'INFY.NS'},
-    'HDFC': {'name': 'HDFC Bank', 'symbol': 'HDFCBANK.NS'},
+    'HDFCBANK': {'name': 'HDFC Bank', 'symbol': 'HDFCBANK.NS'},
     'ICICIBANK': {'name': 'ICICI Bank', 'symbol': 'ICICIBANK.NS'},
     'SBIN': {'name': 'State Bank of India', 'symbol': 'SBIN.NS'},
     'WIPRO': {'name': 'Wipro', 'symbol': 'WIPRO.NS'},
@@ -78,7 +78,7 @@ TICKER_SYMBOLS = [
     {'symbol': 'RELIANCE', 'name': 'Reliance', 'type': 'stock', 'yf_symbol': 'RELIANCE.NS'},
     {'symbol': 'TCS', 'name': 'TCS', 'type': 'stock', 'yf_symbol': 'TCS.NS'},
     {'symbol': 'INFY', 'name': 'Infosys', 'type': 'stock', 'yf_symbol': 'INFY.NS'},
-    {'symbol': 'HDFC', 'name': 'HDFC Bank', 'type': 'stock', 'yf_symbol': 'HDFCBANK.NS'},
+    {'symbol': 'HDFCBANK', 'name': 'HDFC Bank', 'type': 'stock', 'yf_symbol': 'HDFCBANK.NS'},
 ]
 
 # Price cache to reduce API calls (cache for 30 seconds)
@@ -226,23 +226,85 @@ def _fetch_alpha_vantage_daily(symbol: str, outputsize: str = 'compact'):
     return None
 
 
+# Optimized Parallel Fetching
+import asyncio
+import aiohttp
+
+async def fetch_price_async(session, symbol):
+    """Async fetch for a single stock"""
+    try:
+        # For Indian stocks, ensure .NS suffix
+        search_symbol = symbol
+        if symbol in ['RELIANCE', 'TCS', 'INFY', 'HDFC', 'SBIN', 'ICICIBANK'] and not symbol.endswith('.NS'):
+            search_symbol = f"{symbol}.NS"
+            
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{search_symbol}?interval=1d&range=1d"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as response:
+            if response.status == 200:
+                data = await response.json()
+                result = data['chart']['result'][0]
+                meta = result['meta']
+                price = meta.get('regularMarketPrice') or meta.get('chartPreviousClose')
+                prev_close = meta.get('chartPreviousClose', price)
+                
+                return {
+                    'symbol': symbol,
+                    'price': price,
+                    'change': price - prev_close,
+                    'changePercent': ((price - prev_close) / prev_close) * 100 if prev_close else 0
+                }
+    except:
+        pass
+    return None
+
+async def get_all_prices_async(symbols):
+    """Fetch all prices in parallel"""
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_price_async(session, symbol) for symbol in symbols]
+        return await asyncio.gather(*tasks)
+
 def get_ticker_prices():
-    """Get live prices for scrolling ticker bar using yfinance"""
+    """Get live prices using parallel async requests"""
     results = []
     
+    # Extract symbols
+    symbols_to_fetch = [item.get('yf_symbol', item['symbol']) for item in TICKER_SYMBOLS]
+    
+    # Run async fetch
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+            # If we are already in a loop (unlikely for Sync Flask but possible in some envs)
+            # Just create new loop in new thread or use sync fallback. 
+            # For simplicity in this script, we assume standard sync Flask.
+            fetched_data = loop.run_until_complete(get_all_prices_async(symbols_to_fetch))
+        else:
+            fetched_data = loop.run_until_complete(get_all_prices_async(symbols_to_fetch))
+            
+    except Exception as e:
+        print(f"Async fetch failed: {e}")
+        fetched_data = [None] * len(symbols_to_fetch)
+    
+    # Create lookup map
+    price_map = {}
+    if fetched_data:
+        for data in fetched_data:
+            if data:
+                price_map[data['symbol']] = data
+                
     for item in TICKER_SYMBOLS:
-        quote = None
+        symbol_key = item.get('yf_symbol', item['symbol'])
+        quote = price_map.get(symbol_key)
         
-        # Try yfinance first (more accurate)
-        if HAS_YFINANCE:
-            quote = _fetch_yfinance_quote(item['yf_symbol'])
-        
-        # Fallback to Alpha Vantage
-        if not quote:
-            quote = _fetch_alpha_vantage_quote(item.get('yf_symbol', item['symbol']))
-        
-        if quote and quote['price'] > 0:
-            results.append({
+        if quote:
+             results.append({
                 'symbol': item['name'],
                 'price': round(quote['price'], 2),
                 'change': round(quote['change'], 2),
@@ -250,22 +312,58 @@ def get_ticker_prices():
                 'type': item['type']
             })
         else:
-            # Fallback with realistic mock data (updated January 2026 prices)
-            base_prices = {
-                'SENSEX': 76500, 'Nifty 50': 23200, 'NIFTY': 23200,
-                'Reliance': 1280, 'TCS': 4150, 'Infosys': 1890,
-                'HDFC Bank': 1625
-            }
-            base = base_prices.get(item['name'], 1500)
-            change = random.uniform(-base * 0.015, base * 0.015)
-            results.append({
-                'symbol': item['name'],
-                'price': round(base + change, 2),
-                'change': round(change, 2),
-                'changePercent': round((change / base) * 100, 2),
-                'type': item['type']
-            })
-    
+
+            # Skip if no data available (Real data only)
+            continue
+            
+            
+    return results
+
+
+def get_batch_stock_prices(symbols: list):
+    """Fetch multiple stock prices in parallel"""
+    # Run async fetch
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+             # If already in async loop, this might block, but for Flask/sync it's usually fine
+             # Ideally we'd use aiohttp directly in async views, but staying sync-compatible here
+             import threading
+             result = []
+             def run_in_thread():
+                 new_loop = asyncio.new_event_loop()
+                 asyncio.set_event_loop(new_loop)
+                 result.append(new_loop.run_until_complete(get_all_prices_async(symbols)))
+                 new_loop.close()
+             
+             t = threading.Thread(target=run_in_thread)
+             t.start()
+             t.join()
+             fetched_data = result[0]
+        else:
+            fetched_data = loop.run_until_complete(get_all_prices_async(symbols))
+            
+    except Exception as e:
+        print(f"Async batch fetch failed: {e}")
+        fetched_data = [None] * len(symbols)
+        
+    # Map to result format
+    results = {}
+    if fetched_data:
+        for data in fetched_data:
+            if data:
+                stock_info = INDIAN_STOCKS.get(data['symbol'].replace('.NS', ''), {'name': data['symbol']})
+                results[data['symbol'].replace('.NS', '')] = {
+                    'symbol': data['symbol'].replace('.NS', ''),
+                    'name': stock_info['name'],
+                    'price': round(data['price'], 2),
+                    'changePercent': round(data['changePercent'], 2)
+                }
     return results
 
 
@@ -284,7 +382,7 @@ def search_stocks(query: str):
             if not quote:
                 quote = _fetch_alpha_vantage_quote(stock['symbol'])
             
-            price = quote['price'] if quote else random.uniform(500, 3000)
+            price = quote['price'] if quote else 0
             
             results.append({
                 'symbol': key,
@@ -296,44 +394,90 @@ def search_stocks(query: str):
     return results[:10]
 
 
+# Optimized get_stock_price with caching and direct API calls
+import requests
+import time
+
+# Cache for 2 minutes
+price_cache = {}
+CACHE_EXPIRY = 120  # seconds
+
 def get_stock_price(symbol: str):
-    """Get current price and details for a stock using yfinance"""
-    stock_info = INDIAN_STOCKS.get(symbol.upper())
+    """Get current price using fast Yahoo Finance API with caching"""
+    # Check cache first
+    if symbol in price_cache:
+        price, timestamp = price_cache[symbol]
+        if time.time() - timestamp < CACHE_EXPIRY:
+            stock_info = INDIAN_STOCKS.get(symbol.upper(), {'name': symbol})
+            return {
+                'symbol': symbol.upper(),
+                'name': stock_info['name'],
+                'price': float(price),
+                'change': 0,
+                'changePercent': 0,
+                'is_cached': True
+            }
     
-    if not stock_info:
-        return None
-    
-    # Try yfinance first (accurate real-time data)
-    quote = None
-    if HAS_YFINANCE:
-        quote = _fetch_yfinance_quote(stock_info['symbol'])
-    
-    # Fallback to Alpha Vantage
-    if not quote:
-        quote = _fetch_alpha_vantage_quote(stock_info['symbol'])
-    
-    if quote and quote['price'] > 0:
-        return {
-            'symbol': symbol.upper(),
-            'name': stock_info['name'],
-            'price': round(quote['price'], 2),
-            'change': round(quote['change'], 2),
-            'changePercent': round(quote['changePercent'], 2),
-            'high': round(quote.get('high', quote['price']), 2),
-            'low': round(quote.get('low', quote['price']), 2),
-            'volume': quote.get('volume', 0)
-        }
-    else:
-        # Realistic fallback
-        base = random.uniform(1000, 3000)
-        change = random.uniform(-100, 100)
-        return {
-            'symbol': symbol.upper(),
-            'name': stock_info['name'],
-            'price': round(base, 2),
-            'change': round(change, 2),
-            'changePercent': round((change / base) * 100, 2),
-        }
+    # For Indian stocks, add .NS suffix if not present
+    search_symbol = symbol
+    if symbol in ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'SBIN', 'ICICIBANK'] or symbol in INDIAN_STOCKS:
+        if not symbol.endswith('.NS'):
+            search_symbol = f"{symbol}.NS"
+            
+    try:
+        # Fast API with timeout
+        # Using query1.finance.yahoo.com v8 chart API which is faster than scraping
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{search_symbol}?interval=1d&range=1d"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=3)  # 3 second timeout
+        
+        if response.status_code == 200:
+            data = response.json()
+            result = data['chart']['result'][0]
+            meta = result['meta']
+            price = meta.get('regularMarketPrice') or meta.get('chartPreviousClose')
+            
+            if price:
+                # Cache the result
+                price_cache[symbol] = (price, time.time())
+                
+                stock_info = INDIAN_STOCKS.get(symbol.upper(), {'name': symbol})
+                
+                # Calculate change more robustly
+                prev_close = meta.get('chartPreviousClose') or meta.get('previousClose')
+                
+                change = 0
+                change_percent = 0
+                
+                if prev_close and prev_close > 0:
+                    change = price - prev_close
+                    change_percent = (change / prev_close) * 100
+                
+                return {
+                    'symbol': symbol.upper(),
+                    'name': stock_info['name'],
+                    'price': round(price, 2),
+                    'change': round(change, 2),
+                    'changePercent': round(change_percent, 2),
+                    'high': round(price * 1.01, 2), # Approx
+                    'low': round(price * 0.99, 2), # Approx
+                    'volume': 0
+                }
+        
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        # Return cached value if available, even if expired
+        if symbol in price_cache:
+            price, _ = price_cache[symbol]
+            stock_info = INDIAN_STOCKS.get(symbol.upper(), {'name': symbol})
+            return {
+                'symbol': symbol.upper(),
+                'name': stock_info['name'],
+                'price': round(price, 2), 
+                'is_cached': True
+            }
+            
+    return None
 
 
 def get_stock_chart(symbol: str, period: str = '1M'):
@@ -483,7 +627,15 @@ def predict_stock_price(symbol: str, days: int = 7):
         try:
             ml_result = predict_with_ml(prices, symbol, days)
             if ml_result and ml_result.get('predictions'):
-                ml_result['indicators'] = indicators
+                # Merge indicators if they exist
+                if indicators:
+                    ml_indicators = ml_result.get('indicators', {})
+                    # Keep ML indicators, add missing ones from legacy
+                    for k, v in indicators.items():
+                        if k not in ml_indicators:
+                            ml_indicators[k] = v
+                    ml_result['indicators'] = ml_indicators
+                
                 ml_result['name'] = stock_info['name']
                 print(f"✅ ML prediction for {symbol}: {ml_result['predictedChange']:.2f}%")
                 return ml_result
@@ -492,87 +644,6 @@ def predict_stock_price(symbol: str, days: int = 7):
     
     if not indicators:
         return _fallback_prediction(symbol, current_price, days)
-    
-    # Try Gemini AI for intelligent prediction
-    if gemini_model:
-        try:
-            prompt = f"""Analyze this stock and provide a 7-day price prediction.
-
-STOCK: {symbol} ({stock_info['name']})
-CURRENT PRICE: ₹{current_price}
-
-TECHNICAL INDICATORS:
-- 5-day SMA: ₹{indicators['sma_5']}
-- 10-day SMA: ₹{indicators['sma_10']}
-- 20-day SMA: ₹{indicators['sma_20']}
-- 5-day Momentum: {indicators['momentum_5d']}%
-- 10-day Momentum: {indicators['momentum_10d']}%
-- Volatility: {indicators['volatility']}%
-- RSI (14): {indicators['rsi']}
-- Trend: {indicators['trend']} (strength: {indicators['trend_strength']}%)
-- Price vs SMA20: {indicators['price_vs_sma20']}%
-
-RECENT PRICES (last 10 days): {prices[-10:]}
-
-Based on this technical analysis, predict the stock price for the next 7 days.
-Consider: trend direction, momentum, RSI overbought/oversold levels, and volatility.
-
-RESPOND IN EXACTLY THIS JSON FORMAT (no other text):
-{{
-    "predictions": [
-        {{"day": 1, "price": <number>, "low": <number>, "high": <number>}},
-        {{"day": 2, "price": <number>, "low": <number>, "high": <number>}},
-        {{"day": 3, "price": <number>, "low": <number>, "high": <number>}},
-        {{"day": 4, "price": <number>, "low": <number>, "high": <number>}},
-        {{"day": 5, "price": <number>, "low": <number>, "high": <number>}},
-        {{"day": 6, "price": <number>, "low": <number>, "high": <number>}},
-        {{"day": 7, "price": <number>, "low": <number>, "high": <number>}}
-    ],
-    "trend": "bullish" or "bearish",
-    "confidence": <number between 50-95>,
-    "analysis": "<brief 1-line analysis>"
-}}"""
-
-            response = gemini_model.generate_content(prompt)
-            response_text = response.text.strip()
-            
-            # Extract JSON from response
-            json_match = response_text
-            if '```json' in response_text:
-                json_match = response_text.split('```json')[1].split('```')[0].strip()
-            elif '```' in response_text:
-                json_match = response_text.split('```')[1].split('```')[0].strip()
-            
-            ai_result = json.loads(json_match)
-            
-            # Format predictions
-            predictions = []
-            for p in ai_result.get('predictions', []):
-                predictions.append({
-                    'day': p['day'],
-                    'predicted': round(float(p['price']), 2),
-                    'low': round(float(p['low']), 2),
-                    'high': round(float(p['high']), 2)
-                })
-            
-            if predictions:
-                final_pred = predictions[-1]['predicted']
-                change_pct = ((final_pred - current_price) / current_price) * 100
-                
-                return {
-                    'symbol': symbol.upper(),
-                    'currentPrice': round(current_price, 2),
-                    'predictions': predictions,
-                    'predictedChange': round(change_pct, 2),
-                    'confidence': ai_result.get('confidence', 70),
-                    'trend': ai_result.get('trend', 'bullish' if change_pct > 0 else 'bearish'),
-                    'analysis': ai_result.get('analysis', ''),
-                    'indicators': indicators,
-                    'source': 'gemini_ai'
-                }
-                
-        except Exception as e:
-            print(f"Gemini prediction error: {e}")
     
     # Fallback to technical indicator-based prediction
     return _technical_prediction(symbol, current_price, indicators, days)

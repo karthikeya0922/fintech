@@ -7,226 +7,192 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 
+import numpy as np
+from typing import List, Dict, Optional
+from datetime import datetime, timedelta
+from sklearn.svm import SVR
+from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+
+import os
+import json
+import numpy as np
+from typing import List, Dict, Optional
+from datetime import datetime, timedelta
+import google.generativeai as genai
+from config import Config
+
 class StockPredictor:
-    """Stock predictor using momentum-continuation and trend analysis"""
+    """
+    Advanced Stock Predictor using Google Gemini API.
+    Leverages LLM context window to analyze technicals and patterns.
+    """
     
     def __init__(self):
-        self.feature_names = []
-    
+        self.api_key = os.getenv('GEMINI_API_KEY', Config.GEMINI_API_KEY if hasattr(Config, 'GEMINI_API_KEY') else None)
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
+        else:
+            self.model = None
+            print("⚠️ Gemini API Key missing for StockPredictor")
+
     def _calculate_indicators(self, prices: List[float]) -> Dict:
-        """Calculate technical indicators from price history"""
-        if len(prices) < 20:
+        """Calculate technical indicators for context"""
+        if len(prices) < 14:
             return None
-        
+            
         current = prices[-1]
+        returns = np.diff(prices) / prices[:-1]
         
-        # Moving averages
-        sma_5 = np.mean(prices[-5:])
-        sma_10 = np.mean(prices[-10:])
-        sma_20 = np.mean(prices[-20:])
-        
-        # Returns/Momentum
-        ret_1d = (prices[-1] - prices[-2]) / prices[-2] * 100 if prices[-2] > 0 else 0
-        ret_5d = (prices[-1] - prices[-6]) / prices[-6] * 100 if len(prices) > 5 else 0
-        ret_10d = (prices[-1] - prices[-11]) / prices[-11] * 100 if len(prices) > 10 else 0
-        ret_20d = (prices[-1] - prices[-21]) / prices[-21] * 100 if len(prices) > 20 else 0
-        
-        # Volatility
-        returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(max(1, len(prices)-20), len(prices))]
-        volatility = np.std(returns) if returns else 0.02
+        # Volatility (Annualized)
+        volatility = np.std(returns) * np.sqrt(252) if len(returns) > 0 else 0
         
         # RSI
-        gains = []
-        losses = []
-        for i in range(1, min(15, len(prices))):
-            diff = prices[-i] - prices[-i-1]
-            if diff > 0:
-                gains.append(diff)
-            else:
-                losses.append(abs(diff))
-        
-        avg_gain = np.mean(gains) if gains else 0
-        avg_loss = np.mean(losses) if losses else 0.001
-        rs = avg_gain / avg_loss
+        deltas = np.diff(prices)
+        seed = deltas[:14+1]
+        up = seed[seed >= 0].sum()/14
+        down = -seed[seed < 0].sum()/14
+        rs = up/down if down != 0 else 0
         rsi = 100 - (100 / (1 + rs))
         
-        # Trend direction
-        trend_short = 1 if sma_5 > sma_10 else -1
-        trend_long = 1 if sma_10 > sma_20 else -1
-        
-        # Price position
-        high_20 = max(prices[-20:])
-        low_20 = min(prices[-20:])
-        range_pos = (current - low_20) / (high_20 - low_20) if high_20 > low_20 else 0.5
-        
         return {
-            'current': current,
-            'sma_5': sma_5,
-            'sma_10': sma_10,
-            'sma_20': sma_20,
-            'ret_1d': ret_1d,
-            'ret_5d': ret_5d,
-            'ret_10d': ret_10d,
-            'ret_20d': ret_20d,
-            'volatility': volatility,
             'rsi': rsi,
-            'trend_short': trend_short,
-            'trend_long': trend_long,
-            'range_pos': range_pos
+            'volatility': volatility,
+            'trend': 'bullish' if prices[-1] > prices[-20] else 'bearish',
+            'change_1m': ((prices[-1] - prices[-30]) / prices[-30]) * 100 if len(prices) >= 30 else 0
         }
-    
+
     def predict(self, prices: List[float], forecast_days: int = 7) -> Dict:
         """
-        Make predictions using momentum-continuation approach.
-        Recent trend is more likely to continue than reverse.
+        Generate forecast using Gemini API
         """
-        if len(prices) < 25:
+        if len(prices) < 30:
             return self._simple_prediction(prices, forecast_days)
-        
+
         indicators = self._calculate_indicators(prices)
-        if not indicators:
-            return self._simple_prediction(prices, forecast_days)
-        
         current_price = prices[-1]
-        predictions = []
-        pred_price = current_price
+
+        # PROMPT ENGINEERING
+        history_str = ", ".join([f"{p:.1f}" for p in prices[-30:]]) # Last 30 days
         
-        # Calculate expected daily drift based on recent momentum
-        # Use weighted average of different timeframes
-        daily_drift = (
-            indicators['ret_1d'] * 0.3 +      # Recent momentum matters most
-            indicators['ret_5d'] / 5 * 0.4 +  # 5-day average momentum
-            indicators['ret_10d'] / 10 * 0.2 + # 10-day average
-            indicators['ret_20d'] / 20 * 0.1   # Long-term trend
-        ) / 100  # Convert to decimal
+        prompt = f"""
+        Analyze this stock data for the Indian market context (₹).
+        Current Price: ₹{current_price}
+        Technical Indicators: 
+        - RSI (14): {indicators['rsi']:.1f}
+        - Volatility: {indicators['volatility']*100:.1f}%
+        - 30-Day Change: {indicators['change_1m']:.1f}%
         
-        # Adjust based on RSI (mean reversion at extremes only)
-        if indicators['rsi'] > 80:
-            daily_drift -= 0.002  # Slight pullback expected
-        elif indicators['rsi'] < 20:
-            daily_drift += 0.002  # Slight bounce expected
+        Past 30 Days Price History: [{history_str}]
         
-        # Adjust based on trend alignment
-        if indicators['trend_short'] == 1 and indicators['trend_long'] == 1:
-            # Strong bullish trend - boost positive drift
-            daily_drift = max(daily_drift, 0.001)
-        elif indicators['trend_short'] == -1 and indicators['trend_long'] == -1:
-            # Strong bearish trend
-            daily_drift = min(daily_drift, -0.001)
+        TASK: Predict the stock price for the next {forecast_days} days.
+        - Use simple moving average and RSI to determine short term reversal or continuation.
+        - Be realistic. Stocks rarely move more than 2-3% a day unless volatile.
+        - Return ONLY raw JSON. No markdown.
         
-        # Cap daily drift to realistic bounds (±1.5% typical, ±3% max)
-        daily_drift = np.clip(daily_drift, -0.015, 0.015)
-        
-        # Add slight mean-reversion for stocks that have moved too much
-        if indicators['range_pos'] > 0.9:  # Near 20-day high
-            daily_drift -= 0.001
-        elif indicators['range_pos'] < 0.1:  # Near 20-day low
-            daily_drift += 0.001
-        
-        volatility = indicators['volatility']
-        
-        for day in range(1, forecast_days + 1):
-            # Drift decays slightly over time (momentum effect weakens)
-            decay = 1 - (day - 1) * 0.05
-            effective_drift = daily_drift * decay
+        JSON Format:
+        {{
+            "predictions": [
+                {{ "day": 1, "predicted": <price>, "low": <support>, "high": <resistance> }},
+                ... for all 7 days
+            ],
+            "predictedChange": <total_pct_change_7d>,
+            "confidence": <0-100 integer based on clarity of trend>,
+            "trend": "bullish" | "bearish" | "neutral",
+            "reasoning": "<short sentence explaining why>"
+        }}
+        """
+
+        try:
+            if not self.model:
+                raise Exception("Model not initialized")
+
+            response = self.model.generate_content(prompt)
+            text = response.text.replace('```json', '').replace('```', '').strip()
+            data = json.loads(text)
             
-            # Add randomness based on volatility
-            noise = np.random.randn() * volatility * 0.3
-            daily_return = effective_drift + noise
+            # Format output to match interface
+            predicted_change = float(data['predictedChange'])
             
-            # Cap daily change
-            daily_return = np.clip(daily_return, -0.03, 0.03)
+            # Cap unrealistic predictions to ±5% max for 7 days
+            predicted_change = max(-5, min(5, predicted_change))
             
-            pred_price = pred_price * (1 + daily_return)
+            # ALWAYS recalculate predictions based on current price and capped change
+            current = prices[-1]
+            daily_change = predicted_change / 7 / 100
+            new_predictions = []
+            val = current
+            for day in range(1, 8):
+                val = val * (1 + daily_change)
+                new_predictions.append({
+                    'day': day,
+                    'predicted': round(val, 2),
+                    'low': round(val * 0.995, 2),
+                    'high': round(val * 1.005, 2)
+                })
             
-            # Confidence bands widen over time
-            uncertainty = volatility * np.sqrt(day) * current_price * 1.5
-            low = pred_price - uncertainty
-            high = pred_price + uncertainty
+            # Determine trend from capped change
+            if predicted_change > 1:
+                trend = 'bullish'
+            elif predicted_change < -1:
+                trend = 'bearish'
+            else:
+                trend = 'neutral'
             
-            predictions.append({
-                'day': day,
-                'predicted': round(pred_price, 2),
-                'low': round(max(low, current_price * 0.90), 2),
-                'high': round(min(high, current_price * 1.10), 2)
-            })
-        
-        final_pred = predictions[-1]['predicted']
-        change_pct = ((final_pred - current_price) / current_price) * 100
-        
-        # Determine trend
-        if change_pct > 1:
-            trend = 'bullish'
-        elif change_pct < -1:
-            trend = 'bearish'
-        else:
-            trend = 'neutral'
-        
-        # Confidence based on trend alignment and volatility
-        confidence = 70
-        if indicators['trend_short'] == indicators['trend_long']:
-            confidence += 10  # Aligned trend = higher confidence
-        if volatility < 0.02:
-            confidence += 5  # Low volatility = more predictable
-        confidence = min(85, max(55, confidence))
-        
-        return {
-            'predictions': predictions,
-            'predictedChange': round(change_pct, 2),
-            'confidence': confidence,
-            'trend': trend,
-            'source': 'momentum_trend',
-            'indicators': {
-                'rsi': round(indicators['rsi'], 1),
-                'momentum_5d': round(indicators['ret_5d'], 2),
-                'trend': 'up' if indicators['trend_short'] == 1 else 'down',
-                'volatility': round(volatility * 100, 2)
+            result = {
+                'predictions': new_predictions,
+                'predictedChange': round(predicted_change, 2),
+                'confidence': min(int(data.get('confidence', 60)), 75),  # Cap confidence
+                'trend': trend,
+                'source': 'Gemini 1.5 Flash',
+                'indicators': {
+                    'rsi': round(indicators['rsi'], 1),
+                    'macd': 0,
+                    'volatility': round(indicators['volatility'] * 100, 1),
+                    'trendStrength': abs(predicted_change) / 10
+                }
             }
-        }
-    
+            return result
+
+        except Exception as e:
+            print(f"Gemini Prediction Error: {e}")
+            return self._simple_prediction(prices, forecast_days)
+
     def _simple_prediction(self, prices: List[float], forecast_days: int) -> Dict:
-        """Fallback for limited data"""
-        if len(prices) < 2:
-            return None
-            
+        """Fallback momentum prediction - conservative approach"""
         current_price = prices[-1]
         
-        # Use recent momentum
-        if len(prices) >= 5:
-            momentum = (prices[-1] - prices[-5]) / prices[-5]
-        else:
-            momentum = (prices[-1] - prices[0]) / prices[0]
-        
-        daily_momentum = momentum / min(5, len(prices))
-        volatility = 0.015  # Assume 1.5% daily volatility
+        # Calculate momentum from last 5 days, cap to ±2% momentum
+        momentum = (prices[-1] - prices[-5]) / prices[-5] if len(prices) > 5 else 0
+        momentum = np.clip(momentum, -0.02, 0.02)  # Very conservative
         
         predictions = []
-        pred_price = current_price
+        val = current_price
         
         for day in range(1, forecast_days + 1):
-            drift = daily_momentum * (1 - day * 0.05)  # Decay
-            noise = np.random.randn() * volatility * 0.2
-            daily_change = np.clip(drift + noise, -0.02, 0.02)
-            pred_price = pred_price * (1 + daily_change)
-            
-            uncertainty = volatility * np.sqrt(day) * current_price
-            
+            # Small daily movement (momentum spread over 7 days with damping)
+            daily_change = momentum / forecast_days * 0.7  # 70% damping
+            val = val * (1 + daily_change)
             predictions.append({
                 'day': day,
-                'predicted': round(pred_price, 2),
-                'low': round(pred_price - uncertainty, 2),
-                'high': round(pred_price + uncertainty, 2)
+                'predicted': round(val, 2),
+                'low': round(val * 0.99, 2),
+                'high': round(val * 1.01, 2)
             })
-        
-        final_pred = predictions[-1]['predicted']
-        change_pct = ((final_pred - current_price) / current_price) * 100
+            
+        change_pct = ((val - current_price) / current_price) * 100
+        # Final cap to ±5%
+        change_pct = np.clip(change_pct, -5, 5)
         
         return {
             'predictions': predictions,
             'predictedChange': round(change_pct, 2),
-            'confidence': 60,
-            'trend': 'bullish' if change_pct > 0.5 else ('bearish' if change_pct < -0.5 else 'neutral'),
-            'source': 'momentum_simple'
+            'confidence': 55,
+            'trend': 'bullish' if change_pct > 0.5 else 'bearish' if change_pct < -0.5 else 'neutral',
+            'source': 'Simple Momentum',
+            'indicators': {'rsi': 50, 'macd': 0, 'volatility': 0}
         }
 
 

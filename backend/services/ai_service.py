@@ -275,16 +275,23 @@ IMPORTANT: Always use the user's profile data to personalize responses. Referenc
             random.shuffle(stocks)
             selected = stocks[:2]
             
+            # FAST - Parallel Fetch
+            from services.stock_service import get_batch_stock_prices
+            batch_data = get_batch_stock_prices(selected)
+            
             details = []
             for sym in selected:
-                data = get_stock_price(sym)
+                data = batch_data.get(sym)
                 if data:
                     price = data.get('price', 0)
                     change = data.get('changePercent', 0)
                     trend = "📈" if change >= 0 else "📉"
                     details.append(f"{data['name']} (₹{price:,} {trend} {change}%)")
             
-            response = f"Current market trends suggest looking at blue-chip stocks. Right now:\n\n• {details[0]}\n• {details[1]}\n\nGiven your risk profile, these could be good additions for long-term growth. Always do your own research!"
+            if details:
+                response = f"Current market trends suggest looking at blue-chip stocks. Right now:\n\n• {details[0]}\n• {details[1]}\n\nGiven your risk profile, these could be good additions for long-term growth. Always do your own research!"
+            else:
+                 response = f"I recommend looking at blue-chip stocks like Reliance and TCS. However, I'm having trouble fetching live prices right now. Please check the Market Dashboard."
 
         elif any(word in message_lower for word in ['saving', 'save', 'savings']):
             if savings_rate >= 30:
