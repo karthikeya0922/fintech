@@ -507,27 +507,67 @@ def get_defense_engine_stats() -> Dict:
     }
 
 
+import networkx as nx
+import math
+
 def get_entity_network(user_id: str = 'USR-4521') -> Dict:
-    """Get entity relationship network for investigation"""
+    """Get entity relationship network using NetworkX for layout"""
+    G = nx.Graph()
+    
+    # 1. Add Nodes
+    # Hub (User)
+    G.add_node('USR-4521', type='user', label='User Account', riskScore=75, size=50)
+    
+    # Peripheral Nodes (Riskier nodes deeper/connected)
+    nodes = [
+        ('192.168.1.x', {'type': 'ip', 'label': 'Shipping Addr', 'riskScore': 88, 'critical': True}), # High risk
+        ('iPhone 13', {'type': 'device', 'label': 'iPhone 13', 'riskScore': 45, 'critical': False}),
+        ('Windows PC', {'type': 'device', 'label': 'Windows PC', 'riskScore': 82, 'critical': True}),
+        ('**** 2727', {'type': 'card', 'label': '**** 2727', 'riskScore': 10, 'critical': False}),
+        ('**** 7210', {'type': 'card', 'label': '**** 7210', 'riskScore': 12, 'critical': False}),
+        ('Oppo A5', {'type': 'device', 'label': 'Oppo A5', 'riskScore': 5, 'critical': False}),
+    ]
+    
+    for n_id, attrs in nodes:
+        G.add_node(n_id, **attrs)
+        G.add_edge('USR-4521', n_id)
+
+    # 2. Compute Layout (Force-directed / "Mind Map" style)
+    # k parameter controls spacing. Scale controls overall size.
+    pos = nx.spring_layout(G, k=1.5, seed=42, iterations=50, scale=140) 
+    
+    # 3. Format Response
+    response_nodes = []
+    
+    # Center the graph around 0,0 effectively
+    center_x, center_y = pos['USR-4521']
+    
+    for node_id, attrs in G.nodes(data=True):
+        x, y = pos[node_id]
+        
+        # Calculate angle for UI rotation if needed (optional)
+        # But mostly we just want x/y relative to center
+        dx = x - center_x
+        dy = y - center_y
+        
+        # If it's the center node, pin it
+        if node_id == 'USR-4521':
+            dx, dy = 0, 0
+            
+        response_nodes.append({
+            'id': node_id,
+            'type': attrs.get('type', 'unknown'),
+            'label': attrs.get('label', node_id),
+            'riskScore': attrs.get('riskScore', 0),
+            'isCritical': attrs.get('critical', False),
+            'x': float(dx), # Relative offset from center
+            'y': float(dy),
+            'dist': math.sqrt(dx*dx + dy*dy)
+        })
+
     return {
-        'nodes': [
-            {'id': 'USR-4521', 'type': 'user', 'label': 'User Account', 'riskScore': 75},
-            {'id': 'DEV-1192', 'type': 'device', 'label': 'iPhone 15', 'riskScore': 45},
-            {'id': 'DEV-2283', 'type': 'device', 'label': 'MacBook Pro', 'riskScore': 12},
-            {'id': 'DEV-3394', 'type': 'device', 'label': 'Windows PC', 'riskScore': 82},
-            {'id': 'IP-001', 'type': 'ip', 'label': '192.168.1.x', 'riskScore': 15},
-            {'id': 'IP-002', 'type': 'ip', 'label': '45.227.x.x', 'riskScore': 92},
-            {'id': 'ACC-8834', 'type': 'account', 'label': 'Account ***4521', 'riskScore': 68},
-        ],
-        'edges': [
-            {'from': 'USR-4521', 'to': 'DEV-1192'},
-            {'from': 'USR-4521', 'to': 'DEV-2283'},
-            {'from': 'USR-4521', 'to': 'DEV-3394'},
-            {'from': 'USR-4521', 'to': 'ACC-8834'},
-            {'from': 'DEV-1192', 'to': 'IP-001'},
-            {'from': 'DEV-2283', 'to': 'IP-001'},
-            {'from': 'DEV-3394', 'to': 'IP-002'},
-        ],
+        'nodes': response_nodes,
+        'edges': [{'from': u, 'to': v} for u, v in G.edges()]
     }
 
 
@@ -558,3 +598,112 @@ def block_suspicious_ips() -> Dict:
         'count': len(set(blocked)),
         'message': f'Blocked {len(set(blocked))} suspicious IP addresses'
     }
+
+
+def get_buckets_analysis() -> Dict:
+    """
+    Generate comprehensive fraud intelligence analysis (READ-ONLY).
+    Returns structured data for 6 buckets: summary, causes, devices, geo, IP/VPN, alerts.
+    """
+    # Ensure we have alerts to analyze
+    if len(_alerts) < 5:
+        _generate_demo_alerts()
+    
+    # 1. FRAUD ALERT SUMMARY
+    total_payments = random.randint(1200, 2500)
+    fraud_count = len([a for a in _alerts if a.get('riskScore', 0) >= 50])
+    high_risk = len([a for a in _alerts if a.get('type') in ['CRITICAL', 'HIGH']])
+    medium_risk = len([a for a in _alerts if a.get('type') == 'MEDIUM'])
+    
+    risk_level = 'High' if high_risk > 3 else ('Medium' if medium_risk > 2 else 'Low')
+    
+    fraud_alert_summary = {
+        'payments_analyzed': total_payments,
+        'fraud_detected': fraud_count,
+        'high_risk_count': high_risk,
+        'medium_risk_count': medium_risk,
+        'low_risk_count': len([a for a in _alerts if a.get('type') == 'LOW']),
+        'risk_level': risk_level
+    }
+    
+    # 2. FRAUD CAUSE BREAKDOWN
+    fraud_causes_map = {
+        'CRITICAL': ['VPN + Geo Jump', 'Account Takeover', 'Velocity Anomaly + New Device'],
+        'HIGH': ['Geo Jump', 'Velocity Anomaly', 'Device Mismatch', 'Night Transaction'],
+        'MEDIUM': ['New Device', 'Unusual Location', 'Failed Auth Attempts'],
+        'LOW': ['Minor Velocity Increase', 'Profile Update']
+    }
+    
+    fraud_causes = []
+    for alert in _alerts[:10]:
+        if alert.get('riskScore', 0) >= 40:
+            causes = fraud_causes_map.get(alert.get('type', 'LOW'), ['Unknown'])
+            fraud_causes.append({
+                'transaction_id': alert.get('entityId', 'TXN-UNKNOWN'),
+                'cause': random.choice(causes),
+                'risk_score': alert.get('riskScore', 0),
+                'confidence': 'High' if alert.get('riskScore', 0) >= 80 else ('Medium' if alert.get('riskScore', 0) >= 50 else 'Low'),
+                'explanation': _get_cause_explanation(alert)
+            })
+    
+    # 3. DEVICE ANALYSIS
+    devices = [
+        {'device': 'Android (Samsung)', 'os': 'Android 14', 'browser': 'Chrome Mobile', 'is_new': False, 'accounts_linked': 1, 'flagged': False},
+        {'device': 'iPhone 13', 'os': 'iOS 17.2', 'browser': 'Safari', 'is_new': False, 'accounts_linked': 1, 'flagged': False},
+        {'device': 'Windows PC', 'os': 'Windows 11', 'browser': 'Chrome 120', 'is_new': True, 'accounts_linked': 3, 'flagged': True},
+        {'device': 'MacBook Pro', 'os': 'macOS Sonoma', 'browser': 'Safari 17', 'is_new': False, 'accounts_linked': 1, 'flagged': False},
+        {'device': 'Oppo A5', 'os': 'Android 12', 'browser': 'Chrome Mobile', 'is_new': True, 'accounts_linked': 2, 'flagged': True},
+    ]
+    
+    # 4. GEOLOCATION INSIGHTS
+    geo_insights = [
+        {'country': 'India', 'state': 'Maharashtra', 'city': 'Mumbai', 'suspicious': False, 'impossible_travel': False},
+        {'country': 'India', 'state': 'Karnataka', 'city': 'Bangalore', 'suspicious': False, 'impossible_travel': False},
+        {'country': 'India', 'state': 'Delhi', 'city': 'New Delhi', 'suspicious': True, 'impossible_travel': True, 'reason': 'Location jump: Mumbai to Delhi in 5 minutes'},
+        {'country': 'Singapore', 'state': 'Central', 'city': 'Singapore', 'suspicious': True, 'impossible_travel': True, 'reason': 'International access from new location'},
+    ]
+    
+    # 5. IP & VPN DETECTION
+    ip_vpn_analysis = [
+        {'ip': '103.21.xxx.xxx', 'vpn_detected': False, 'proxy_detected': False, 'tor_detected': False, 'ip_type': 'Residential', 'users_count': 1, 'risk_score': 15},
+        {'ip': '45.33.xxx.xxx', 'vpn_detected': True, 'proxy_detected': False, 'tor_detected': False, 'ip_type': 'Datacenter', 'users_count': 1, 'risk_score': 85},
+        {'ip': '192.168.xxx.xxx', 'vpn_detected': False, 'proxy_detected': True, 'tor_detected': False, 'ip_type': 'Datacenter', 'users_count': 4, 'risk_score': 72},
+        {'ip': '185.220.xxx.xxx', 'vpn_detected': True, 'proxy_detected': False, 'tor_detected': True, 'ip_type': 'TOR Exit Node', 'users_count': 1, 'risk_score': 95},
+    ]
+    
+    # 6. FRAUD PATTERN ALERTS
+    pattern_alerts = [
+        {'severity': 'HIGH', 'message': 'Multiple high-value transactions from different devices using the same VPN IP', 'count': 3},
+        {'severity': 'HIGH', 'message': 'Same device fingerprint linked to 3 different accounts', 'count': 1},
+        {'severity': 'MEDIUM', 'message': 'Repeated failed authentication attempts followed by successful login from new device', 'count': 2},
+        {'severity': 'MEDIUM', 'message': 'Transaction velocity spike: 12 transactions in last hour vs 2/hour average', 'count': 1},
+        {'severity': 'LOW', 'message': 'Profile information updated from new location', 'count': 4},
+    ]
+    
+    return {
+        'fraud_alert_summary': fraud_alert_summary,
+        'fraud_causes': fraud_causes,
+        'device_insights': devices,
+        'geo_insights': geo_insights,
+        'ip_vpn_analysis': ip_vpn_analysis,
+        'alerts': pattern_alerts,
+        'generated_at': datetime.now().isoformat()
+    }
+
+
+def _get_cause_explanation(alert: Dict) -> str:
+    """Generate a 1-line deterministic explanation for a fraud cause"""
+    risk = alert.get('riskScore', 0)
+    alert_type = alert.get('type', 'LOW')
+    
+    explanations = {
+        'CRITICAL': f"High-severity anomaly detected with {risk}% confidence - immediate review required",
+        'HIGH': f"Multiple risk factors converged resulting in {risk}% fraud probability",
+        'MEDIUM': f"Unusual pattern detected - monitoring recommended (Risk: {risk}%)",
+        'LOW': f"Minor deviation from normal behavior (Risk: {risk}%)"
+    }
+    return explanations.get(alert_type, f"Anomaly detected with {risk}% risk score")
+
+
+# Auto-seed alerts on startup
+_generate_demo_alerts()

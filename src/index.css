@@ -4409,3 +4409,162 @@ a:hover {
     transform: scale(1);
   }
 }
+
+/* ========== INVESTIGATION BLADE ========== */
+.investigation-panel {
+  background: rgba(10, 10, 15, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+}
+
+.network-topology {
+  position: relative;
+  background-color: var(--bg-primary);
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  height: 500px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.network-topology::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent 30%, var(--bg-primary) 100%);
+  pointer-events: none;
+}
+
+.node-connection {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: 0 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-blue), transparent);
+  opacity: 0.3;
+  z-index: 1;
+}
+
+.network-node {
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+}
+
+.network-node:hover {
+  transform: scale(1.1);
+  z-index: 20;
+}
+
+.network-node.center {
+  width: 70px;
+  height: 70px;
+  border-color: var(--text-primary);
+  box-shadow: 0 0 30px rgba(255, 255, 255, 0.1);
+}
+
+.network-node.warning {
+  border-color: var(--warning);
+  box-shadow: 0 0 20px var(--warning-light);
+}
+
+.network-node.critical {
+  border-color: var(--danger);
+  box-shadow: 0 0 20px var(--danger-light);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.node-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 8px;
+  background: var(--bg-tertiary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+  border: 1px solid var(--border-light);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.node-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 99px;
+  font-weight: 700;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+/* ========== VELOCITY TABLE ========== */
+.velocity-table-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.velocity-row {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-light);
+  align-items: center;
+}
+
+.velocity-header {
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.velocity-metric-name {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.velocity-metric-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.velocity-stat {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.velocity-change {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 2px;
+}

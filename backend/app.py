@@ -30,7 +30,8 @@ from services.fraud_service import (
     get_defense_engine_stats,
     get_entity_network,
     bulk_approve_low_risk,
-    block_suspicious_ips
+    block_suspicious_ips,
+    get_buckets_analysis
 )
 
 # Create Flask app
@@ -238,6 +239,13 @@ def api_bulk_approve():
 def api_block_ips():
     """Block suspicious IPs"""
     result = block_suspicious_ips()
+    return jsonify(result)
+
+
+@app.route('/api/fraud/buckets', methods=['GET'])
+def api_fraud_buckets():
+    """Get comprehensive fraud buckets analysis (READ-ONLY)"""
+    result = get_buckets_analysis()
     return jsonify(result)
 
 
